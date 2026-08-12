@@ -1,0 +1,74 @@
+"use client";
+
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { apiFetch } from "./api";
+import { useAuth } from "./auth";
+
+interface RestaurantContextValue {
+  restaurantId: string | null;
+  setRestaurantId: (id: string) => void;
+  // Feature Package entitlements for the current restaurant -- null (both the "not
+  // loaded yet" and "unrestricted" states collapse to the same value on purpose: see
+  // hasFeature below) until the restaurant fetch completes. Refetch after any action
+  // that might change it (e.g. a super admin reassigning a package).
+  enabledFeatures: string[] | null;
+  refetchRestaurant: () => void;
+  // enabled_features === null means unrestricted, mirroring backend
+  // app/core/deps.py::require_feature's exact semantics -- always go through this
+  // helper rather than reading enabledFeatures directly, so a page can't accidentally
+  // hide a control before the restaurant has even loaded.
+  hasFeature: (code: string) => boolean;
+}
+
+const RestaurantContext = createContext<RestaurantContextValue | undefined>(undefined);
+
+/**
+ * Non-super-admin users are locked to the restaurant on their JWT. A super admin
+ * manages many restaurants, so they pick one on the Restaurants page and it's
+ * remembered here (localStorage) for the rest of the dashboard.
+ */
+export function RestaurantProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const [restaurantId, setRestaurantIdState] = useState<string | null>(null);
+  const [enabledFeatures, setEnabledFeatures] = useState<string[] | null>(null);
+  const [refetchTick, setRefetchTick] = useState(0);
+
+  useEffect(() => {
+    if (user?.role !== "super_admin") {
+      setRestaurantIdState(user?.restaurant_id ?? null);
+      return;
+    }
+    setRestaurantIdState(localStorage.getItem("selected_restaurant_id"));
+  }, [user]);
+
+  useEffect(() => {
+    if (!restaurantId) {
+      setEnabledFeatures(null);
+      return;
+    }
+    apiFetch<{ enabled_features: string[] | null }>(`/restaurants/${restaurantId}`)
+      .then((r) => setEnabledFeatures(r.enabled_features))
+      .catch(() => setEnabledFeatures(null)); // non-fatal -- null already means "unrestricted", the safe default
+  }, [restaurantId, refetchTick]);
+
+  function setRestaurantId(id: string) {
+    localStorage.setItem("selected_restaurant_id", id);
+    setRestaurantIdState(id);
+  }
+
+  const refetchRestaurant = useCallback(() => setRefetchTick((t) => t + 1), []);
+
+  const hasFeature = useCallback((code: string) => enabledFeatures === null || enabledFeatures.includes(code), [enabledFeatures]);
+
+  return (
+    <RestaurantContext.Provider value={{ restaurantId, setRestaurantId, enabledFeatures, refetchRestaurant, hasFeature }}>
+      {children}
+    </RestaurantContext.Provider>
+  );
+}
+
+export function useCurrentRestaurant(): RestaurantContextValue {
+  const ctx = useContext(RestaurantContext);
+  if (!ctx) throw new Error("useCurrentRestaurant must be used within RestaurantProvider");
+  return ctx;
+}

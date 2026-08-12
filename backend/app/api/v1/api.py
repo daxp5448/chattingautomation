@@ -1,0 +1,59 @@
+from fastapi import APIRouter
+
+from app.api.v1.routers import (
+    api_endpoints,
+    auth,
+    bot_config,
+    branches,
+    broadcasts,
+    conversations,
+    coupons,
+    customers,
+    dashboard,
+    display_devices,
+    faq,
+    feature_packages,
+    flow_definitions,
+    generic_conversations,
+    generic_payments,
+    image_type_profiles,
+    images,
+    media,
+    menu,
+    niche_templates,
+    orders,
+    payments,
+    restaurants,
+    webhook,
+    whatsapp_templates,
+    ws,
+)
+
+api_router = APIRouter()
+api_router.include_router(auth.router)
+api_router.include_router(restaurants.router)
+api_router.include_router(branches.router)
+api_router.include_router(menu.router)
+api_router.include_router(customers.router)
+api_router.include_router(orders.router)
+api_router.include_router(bot_config.router)
+api_router.include_router(dashboard.router)
+api_router.include_router(coupons.router)
+api_router.include_router(faq.router)
+api_router.include_router(conversations.router)
+api_router.include_router(payments.router)
+api_router.include_router(generic_payments.router)
+api_router.include_router(webhook.router)
+api_router.include_router(ws.router)
+api_router.include_router(display_devices.router)
+api_router.include_router(display_devices.pos_router)
+api_router.include_router(niche_templates.router)
+api_router.include_router(images.router)
+api_router.include_router(image_type_profiles.router)
+api_router.include_router(flow_definitions.router)
+api_router.include_router(whatsapp_templates.router)
+api_router.include_router(broadcasts.router)
+api_router.include_router(api_endpoints.router)
+api_router.include_router(generic_conversations.router)
+api_router.include_router(feature_packages.router)
+api_router.include_router(media.router)

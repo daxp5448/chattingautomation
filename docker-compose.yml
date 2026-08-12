@@ -1,0 +1,138 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: kelviontech
+    # Bind to localhost only: this compose file is meant to be runnable directly on a
+    # public VPS (see GOING_LIVE.md), and postgres has no business being reachable from the internet.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: 1g
+    cpus: "1.5"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Bind to localhost only: no reason for redis to be internet-reachable on a public VPS.
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    # Bind to localhost only: the S3 API and web console shouldn't be exposed publicly
+    # on a VPS deployment; only the backend/celery containers need to reach minio.
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/kelviontech
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      S3_ENDPOINT_URL: http://minio:9000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    mem_limit: 512m
+    cpus: "1.0"
+
+  celery-worker:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/kelviontech
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    # `celery inspect ping` only succeeds if the worker process is actually consuming
+    # tasks, not just alive -- catches a worker that's hung (stuck on a task, lost its
+    # broker connection) but hasn't crashed, which `restart: unless-stopped` alone can't see.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    mem_limit: 512m
+    cpus: "1.0"
+
+  # Runs app/tasks/reconciliation.py's beat_schedule (see app/tasks/celery_app.py) -- a
+  # separate process from celery-worker on purpose: Celery's own recommendation is one
+  # beat scheduler total (running it in more than one place double-fires every scheduled
+  # task), decoupled from however many worker processes/replicas consume the queue.
+  celery-beat:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/kelviontech
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    mem_limit: 256m
+    cpus: "0.5"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
+    restart: unless-stopped
+    environment:
+      # Server-side only -- next.config.mjs's rewrite proxy uses this to reach the
+      # backend over the compose network by service name. Without it, the proxy would
+      # fall back to its localhost default, which resolves to the frontend container
+      # itself (no backend listening there) rather than the `backend` service.
+      BACKEND_INTERNAL_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    mem_limit: 512m
+    cpus: "1.0"
+
+volumes:
+  postgres_data:
+  minio_data:
