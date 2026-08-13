@@ -37,6 +37,7 @@ const STEP_TYPES: FlowStepType[] = [
   "api_call",
   "human_handoff",
   "ai_response",
+  "send_whatsapp_flow",
 ];
 
 const TYPE_COLORS: Record<FlowStepType, string> = {
@@ -50,6 +51,7 @@ const TYPE_COLORS: Record<FlowStepType, string> = {
   api_call: "border-rose-300 bg-rose-50",
   human_handoff: "border-orange-300 bg-orange-50",
   ai_response: "border-fuchsia-300 bg-fuchsia-50",
+  send_whatsapp_flow: "border-teal-300 bg-teal-50",
 };
 
 const HAS_NO_NEXT: FlowStepType[] = ["human_handoff", "condition"];
@@ -81,6 +83,11 @@ function defaultStepFor(stepId: string, type: FlowStepType): FlowStep {
       return { step_id: stepId, type, message: "Connecting you with our team now" };
     case "ai_response":
       return { step_id: stepId, type, next: null };
+    case "send_whatsapp_flow":
+      // Opt-in per restaurant (whatsapp_flow_order_id) -- see generic_flow_engine.py's
+      // _render_step. fallback_next is where customers land if the business hasn't
+      // enabled native ordering; defaults to `next` if left unset.
+      return { step_id: stepId, type, prompt: "Ready to order?", cta: "Order Now", next: null, fallback_next: null, back_target: null };
   }
 }
 

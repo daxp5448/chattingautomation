@@ -44,6 +44,10 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
       formData.append("image_type", imageType);
       formData.append("catalog_item_id", catalogItemId);
       formData.append("file", file);
+      // Appends after whatever's already shown, rather than every upload defaulting to
+      // the same order value and needing a manual reorder just to separate them.
+      const existingCount = images.filter((img) => !img.replaced_by_image_id).length;
+      formData.append("display_order", String(existingCount));
       const created = await apiFetch<ImageRecord>(`/restaurants/${restaurantId}/images`, {
         method: "POST",
         body: formData,
@@ -86,6 +90,29 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
     }
   }
 
+  async function updateMetadata(imageId: string, patch: Partial<Pick<ImageRecord, "caption" | "alt_text" | "display_order" | "is_active">>) {
+    try {
+      const updated = await apiFetch<ImageRecord>(`/restaurants/${restaurantId}/images/${imageId}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      onChange(images.map((img) => (img.id === imageId ? updated : img)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save image details");
+    }
+  }
+
+  function moveImage(imageId: string, direction: -1 | 1) {
+    const ordered = [...current].sort((a, b) => a.display_order - b.display_order || a.created_at.localeCompare(b.created_at));
+    const index = ordered.findIndex((img) => img.id === imageId);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= ordered.length) return;
+    const a = ordered[index];
+    const b = ordered[targetIndex];
+    updateMetadata(a.id, { display_order: b.display_order });
+    updateMetadata(b.id, { display_order: a.display_order });
+  }
+
   function onDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(false);
@@ -93,7 +120,9 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
     if (file) handleUpload(file);
   }
 
-  const current = images.filter((img) => !img.replaced_by_image_id);
+  const current = images
+    .filter((img) => !img.replaced_by_image_id)
+    .sort((a, b) => a.display_order - b.display_order || a.created_at.localeCompare(b.created_at));
 
   return (
     <div className="space-y-3">
@@ -122,26 +151,77 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
         {uploading ? "Uploading & processing..." : "Drag an image here, or click to browse"}
       </div>
 
+      {current.length > 1 && (
+        <p className="text-xs text-slate-400">
+          {current.length} images -- shown to customers in this order, each with its own caption. Use ▲/▼ to reorder.
+        </p>
+      )}
+
       {current.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {current.map((img) => (
-            <div key={img.id} className="rounded-lg border border-slate-200 p-2">
-              {img.status === "ready" && (img.urls.thumbnail || img.urls.website) ? (
-                <img
-                  src={img.urls.thumbnail || img.urls.website}
-                  alt=""
-                  className="h-24 w-full rounded-md object-cover"
-                />
-              ) : (
-                <div className="flex h-24 w-full items-center justify-center rounded-md bg-slate-100 text-xs text-slate-400">
-                  {img.status === "failed" ? "Failed" : "Processing..."}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {current.map((img, index) => (
+            <div key={img.id} className={`rounded-lg border p-2 ${img.is_active ? "border-slate-200" : "border-slate-200 bg-slate-50 opacity-60"}`}>
+              <div className="flex gap-2">
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <button
+                    type="button"
+                    disabled={index === 0}
+                    onClick={() => moveImage(img.id, -1)}
+                    className="text-xs text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                    title="Move earlier"
+                  >
+                    ▲
+                  </button>
+                  <span className="text-[10px] text-slate-400">{index + 1}</span>
+                  <button
+                    type="button"
+                    disabled={index === current.length - 1}
+                    onClick={() => moveImage(img.id, 1)}
+                    className="text-xs text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                    title="Move later"
+                  >
+                    ▼
+                  </button>
                 </div>
-              )}
-              {img.resolution_warning && (
-                <p className="mt-1 text-xs text-amber-600">
-                  {img.low_quality_reason === "below_target_resolution" ? "Low resolution" : "Small file size"}
-                </p>
-              )}
+
+                {img.status === "ready" && (img.urls.thumbnail || img.urls.website) ? (
+                  <img
+                    src={img.urls.thumbnail || img.urls.website}
+                    alt={img.alt_text || ""}
+                    className="h-24 w-24 shrink-0 rounded-md object-cover"
+                  />
+                ) : (
+                  <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-md bg-slate-100 text-xs text-slate-400">
+                    {img.status === "failed" ? "Failed" : "Processing..."}
+                  </div>
+                )}
+
+                <div className="min-w-0 flex-1 space-y-1">
+                  <input
+                    defaultValue={img.caption || ""}
+                    placeholder="Caption customers see with this photo"
+                    onBlur={(e) => {
+                      const value = e.target.value.trim();
+                      if (value !== (img.caption || "")) updateMetadata(img.id, { caption: value || null });
+                    }}
+                    className="w-full rounded-md border border-slate-200 px-2 py-1 text-xs"
+                  />
+                  <label className="flex items-center gap-1 text-[11px] text-slate-500">
+                    <input
+                      type="checkbox"
+                      checked={img.is_active}
+                      onChange={(e) => updateMetadata(img.id, { is_active: e.target.checked })}
+                    />
+                    Visible to customers
+                  </label>
+                  {img.resolution_warning && (
+                    <p className="text-[11px] text-amber-600">
+                      {img.low_quality_reason === "below_target_resolution" ? "Low resolution" : "Small file size"}
+                    </p>
+                  )}
+                </div>
+              </div>
+
               <div className="mt-2 flex flex-wrap gap-1">
                 <button
                   type="button"

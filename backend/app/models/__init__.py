@@ -1,3 +1,4 @@
+from app.models.analytics_event import AnalyticsEvent
 from app.models.api_endpoint import ApiEndpoint
 from app.models.audit_log import AuditLog
 from app.models.bot_config import BotButton, BotMessage
@@ -29,6 +30,7 @@ from app.models.user import User
 from app.models.whatsapp_template import WhatsAppTemplate
 
 __all__ = [
+    "AnalyticsEvent",
     "ApiEndpoint",
     "AuditLog",
     "BotButton",

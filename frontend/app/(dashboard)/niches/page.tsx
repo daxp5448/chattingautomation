@@ -5,7 +5,7 @@ import { apiFetch, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { FlowGraphEditor } from "@/components/FlowGraphEditor";
 import { TemplateImageUpload } from "@/components/TemplateImageUpload";
-import type { ApiEndpoint, DemoBotStatus, FlowStep, NicheTemplateFull, NicheTemplateSummary } from "@/lib/types";
+import type { ApiEndpoint, DemoBotStatus, FlowStep, NicheCatalogCategory, NicheCatalogItem, NicheTemplateFull, NicheTemplateSummary } from "@/lib/types";
 
 function DemoBotPanel() {
   const [status, setStatus] = useState<DemoBotStatus | null>(null);
@@ -22,22 +22,24 @@ function DemoBotPanel() {
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-800">Demo Bot</h2>
+      <h2 className="text-sm font-semibold text-slate-800">Industry Picker</h2>
       <p className="mt-1 text-xs text-slate-500">
-        The one WhatsApp number prospects can message to try any niche's bot -- see Bot Builder.
+        A WhatsApp number prospects can message to try any niche's bot -- either a dedicated Demo Bot business
+        (see Businesses), or any real business with Industry Picker Mode turned on from its Manage page.
       </p>
       <p className="mt-3 text-sm">
-        Demo number:{" "}
+        Entry point:{" "}
         {status.sentinel_configured ? (
           <span className="font-medium text-emerald-600">Configured</span>
         ) : (
           <span className="font-medium text-amber-600">
-            Not configured -- create a restaurant with &quot;Demo Bot restaurant&quot; checked and a real WhatsApp number.
+            Not configured -- create a business with &quot;Demo Bot business&quot; checked and a real WhatsApp
+            number, or turn on Industry Picker Mode for an existing business.
           </span>
         )}
       </p>
       <p className="mt-1 text-sm text-slate-600">
-        {status.niches.length - missing.length} / {status.niches.length} niches have a demo restaurant provisioned.
+        {status.niches.length - missing.length} / {status.niches.length} niches have a demo business provisioned.
       </p>
       {missing.length > 0 && (
         <p className="mt-1 text-xs text-slate-400">
@@ -55,6 +57,194 @@ function jsonField(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function isValidCategory(c: unknown): c is NicheCatalogCategory {
+  return typeof c === "object" && c !== null && typeof (c as NicheCatalogCategory).name === "string";
+}
+
+function isValidItem(i: unknown): i is NicheCatalogItem {
+  return typeof i === "object" && i !== null && typeof (i as NicheCatalogItem).name === "string";
+}
+
+// Structured browse-and-edit view over default_catalog, so images/names/prices for every
+// category and item across all 12 niches can be changed without touching raw JSON. Any
+// row that doesn't match the expected shape (pre-existing data, if any) falls back to an
+// inline raw-JSON editor for just that one row instead of crashing the whole page --
+// default_catalog itself has no other consumer than niche_provisioning.py, which reads
+// exactly these fields (name/icon_image/items -> name/description/price/price_type/images).
+function CatalogEditor({
+  catalog, onChange,
+}: {
+  catalog: NicheCatalogCategory[];
+  onChange: (catalog: NicheCatalogCategory[]) => void;
+}) {
+  function updateCategory(index: number, patch: Partial<NicheCatalogCategory>) {
+    onChange(catalog.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  }
+  function replaceCategoryRaw(index: number, value: unknown) {
+    onChange(catalog.map((c, i) => (i === index ? (value as NicheCatalogCategory) : c)));
+  }
+  function removeCategory(index: number) {
+    if (!window.confirm("Remove this category and all its items?")) return;
+    onChange(catalog.filter((_, i) => i !== index));
+  }
+  function addCategory() {
+    onChange([...catalog, { name: "New Category", icon_image: null, items: [] }]);
+  }
+  function updateItem(catIndex: number, itemIndex: number, patch: Partial<NicheCatalogItem>) {
+    const items = ((catalog[catIndex].items as NicheCatalogItem[]) || []).map((it, i) => (i === itemIndex ? { ...it, ...patch } : it));
+    updateCategory(catIndex, { items });
+  }
+  function replaceItemRaw(catIndex: number, itemIndex: number, value: unknown) {
+    const items = ((catalog[catIndex].items as NicheCatalogItem[]) || []).map((it, i) => (i === itemIndex ? (value as NicheCatalogItem) : it));
+    updateCategory(catIndex, { items });
+  }
+  function removeItem(catIndex: number, itemIndex: number) {
+    const items = ((catalog[catIndex].items as NicheCatalogItem[]) || []).filter((_, i) => i !== itemIndex);
+    updateCategory(catIndex, { items });
+  }
+  function addItem(catIndex: number) {
+    const items = [
+      ...((catalog[catIndex].items as NicheCatalogItem[]) || []),
+      { name: "New Item", description: "", price: 0, price_type: "fixed", images: [], attributes: {} },
+    ];
+    updateCategory(catIndex, { items });
+  }
+
+  return (
+    <div className="space-y-3">
+      {catalog.map((category, catIndex) => {
+        if (!isValidCategory(category)) {
+          return (
+            <div key={catIndex} className="rounded-md border border-amber-300 bg-amber-50 p-3">
+              <p className="text-xs font-medium text-amber-700">
+                This category doesn&apos;t match the expected shape -- edit it as raw JSON below.
+              </p>
+              <textarea
+                rows={4}
+                defaultValue={JSON.stringify(category, null, 2)}
+                onBlur={(e) => {
+                  try {
+                    replaceCategoryRaw(catIndex, JSON.parse(e.target.value));
+                  } catch {
+                    // still invalid -- leave catalog untouched, keep showing this row
+                  }
+                }}
+                className="mt-2 w-full rounded-md border border-amber-300 px-2 py-1 font-mono text-xs"
+              />
+              <button type="button" onClick={() => removeCategory(catIndex)} className="mt-2 text-xs font-medium text-red-600 hover:text-red-700">
+                Remove category
+              </button>
+            </div>
+          );
+        }
+
+        const items = (category.items as NicheCatalogItem[]) || [];
+
+        return (
+          <div key={catIndex} className="space-y-2 rounded-md border border-slate-200 bg-white p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-slate-500">Category name</label>
+                <input
+                  value={category.name}
+                  onChange={(e) => updateCategory(catIndex, { name: e.target.value })}
+                  className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                />
+              </div>
+              <button type="button" onClick={() => removeCategory(catIndex)} className="mt-5 shrink-0 text-xs font-medium text-red-600 hover:text-red-700">
+                Remove category
+              </button>
+            </div>
+            <TemplateImageUpload
+              label="Category icon"
+              value={category.icon_image || ""}
+              onChange={(url) => updateCategory(catIndex, { icon_image: url || null })}
+            />
+
+            <div className="space-y-2 rounded-md bg-slate-50 p-2">
+              <p className="text-xs font-medium text-slate-500">Items</p>
+              {items.map((item, itemIndex) => {
+                if (!isValidItem(item)) {
+                  return (
+                    <div key={itemIndex} className="rounded-md border border-amber-300 bg-amber-50 p-2">
+                      <p className="text-[11px] font-medium text-amber-700">
+                        This item doesn&apos;t match the expected shape -- edit it as raw JSON below.
+                      </p>
+                      <textarea
+                        rows={3}
+                        defaultValue={JSON.stringify(item, null, 2)}
+                        onBlur={(e) => {
+                          try {
+                            replaceItemRaw(catIndex, itemIndex, JSON.parse(e.target.value));
+                          } catch {
+                            // still invalid -- leave catalog untouched, keep showing this row
+                          }
+                        }}
+                        className="mt-1 w-full rounded-md border border-amber-300 px-2 py-1 font-mono text-xs"
+                      />
+                      <button type="button" onClick={() => removeItem(catIndex, itemIndex)} className="mt-1 text-xs font-medium text-red-600 hover:text-red-700">
+                        Remove
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={itemIndex} className="grid grid-cols-[1fr_auto] gap-2 rounded-md border border-slate-200 bg-white p-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-500">Name</label>
+                        <input
+                          value={item.name}
+                          onChange={(e) => updateItem(catIndex, itemIndex, { name: e.target.value })}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-500">Price</label>
+                        <input
+                          type="number"
+                          value={item.price ?? ""}
+                          onChange={(e) => updateItem(catIndex, itemIndex, { price: e.target.value === "" ? null : Number(e.target.value) })}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[11px] font-medium text-slate-500">Description</label>
+                        <input
+                          value={item.description || ""}
+                          onChange={(e) => updateItem(catIndex, itemIndex, { description: e.target.value })}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <TemplateImageUpload
+                          label="Item photo"
+                          value={item.images?.[0] || ""}
+                          onChange={(url) => updateItem(catIndex, itemIndex, { images: url ? [url] : [] })}
+                        />
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => removeItem(catIndex, itemIndex)} className="self-start text-xs font-medium text-red-600 hover:text-red-700">
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+              <button type="button" onClick={() => addItem(catIndex)} className="text-xs font-medium text-primary hover:underline">
+                + Item
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      <button type="button" onClick={addCategory} className="text-xs font-medium text-primary hover:underline">
+        + Category
+      </button>
+    </div>
+  );
+}
+
 function TemplateEditor({
   template, apiEndpoints, onSaved,
 }: {
@@ -67,10 +257,14 @@ function TemplateEditor({
   const [icon, setIcon] = useState(template.icon || "");
   const [welcomeMessage, setWelcomeMessage] = useState(template.welcome_message);
   const [welcomeBannerImage, setWelcomeBannerImage] = useState(template.welcome_banner_image || "");
-  const [catalogJson, setCatalogJson] = useState(jsonField(template.default_catalog));
-  // Not a real field -- a throwaway "get a URL, paste it into the JSON below" utility for
-  // category/item images, since default_catalog isn't a structured per-image form yet.
-  const [catalogImageUploadUrl, setCatalogImageUploadUrl] = useState("");
+  // `catalog` is the single source of truth, edited either via the structured
+  // CatalogEditor below or the raw-JSON "Advanced" textarea -- see catalogRawEdit.
+  const [catalog, setCatalog] = useState<NicheCatalogCategory[]>(template.default_catalog);
+  // null = textarea shows the JSON derived from `catalog`; a string = the user is mid-edit
+  // in the raw textarea, which wins until it either parses (updating `catalog` too) or the
+  // structured editor changes `catalog` again (which resets this back to null).
+  const [catalogRawEdit, setCatalogRawEdit] = useState<string | null>(null);
+  const [catalogRawError, setCatalogRawError] = useState<string | null>(null);
   const [terminologyJson, setTerminologyJson] = useState(jsonField(template.terminology));
   const [modulesJson, setModulesJson] = useState(jsonField(template.default_modules));
   const [saving, setSaving] = useState(false);
@@ -79,13 +273,22 @@ function TemplateEditor({
   const [flowSaving, setFlowSaving] = useState(false);
   const [flowError, setFlowError] = useState<string | null>(null);
 
+  function setCatalogFromStructured(next: NicheCatalogCategory[]) {
+    setCatalog(next);
+    // The structured editor is now the latest edit -- drop any stale raw-textarea buffer
+    // so it re-derives from `catalog` instead of overwriting this change on next render.
+    setCatalogRawEdit(null);
+    setCatalogRawError(null);
+  }
+
   async function save() {
     setSaving(true);
     setError(null);
     try {
-      let defaultCatalog, terminology, defaultModules;
+      let defaultCatalog: NicheCatalogCategory[] = catalog;
+      let terminology, defaultModules;
       try {
-        defaultCatalog = JSON.parse(catalogJson);
+        if (catalogRawEdit !== null) defaultCatalog = JSON.parse(catalogRawEdit);
         terminology = JSON.parse(terminologyJson);
         defaultModules = JSON.parse(modulesJson);
       } catch {
@@ -185,21 +388,39 @@ function TemplateEditor({
         </div>
       </div>
 
+      <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
+        <p className="text-xs font-medium text-slate-600">Default catalog</p>
+        <p className="mt-1 text-xs text-slate-400">
+          Every category and item a new business starts with -- edit names, prices, and photos below. Photos
+          upload straight to permanent storage; nothing here needs a deploy.
+        </p>
+        <div className="mt-2">
+          <CatalogEditor catalog={catalog} onChange={setCatalogFromStructured} />
+        </div>
+      </div>
+
       <details className="rounded-md border border-slate-100 bg-slate-50 p-3">
         <summary className="cursor-pointer text-xs font-medium text-slate-600">
-          Advanced: default catalog, terminology, modules (raw JSON)
+          Advanced: raw JSON (bulk edits, terminology, modules)
         </summary>
         <div className="mt-2 space-y-3">
           <div>
-            <TemplateImageUpload
-              label="Upload a category/item photo -- copy the URL below into default_catalog's icon_image/images fields"
-              value={catalogImageUploadUrl}
-              onChange={setCatalogImageUploadUrl}
-            />
-          </div>
-          <div>
             <label className="block text-xs font-medium text-slate-500">default_catalog</label>
-            <textarea rows={6} value={catalogJson} onChange={(e) => setCatalogJson(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-xs" />
+            <textarea
+              rows={6}
+              value={catalogRawEdit ?? jsonField(catalog)}
+              onChange={(e) => {
+                setCatalogRawEdit(e.target.value);
+                try {
+                  setCatalog(JSON.parse(e.target.value));
+                  setCatalogRawError(null);
+                } catch {
+                  setCatalogRawError("Not valid JSON yet -- the structured editor above won't update until this parses.");
+                }
+              }}
+              className="w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-xs"
+            />
+            {catalogRawError && <p className="mt-1 text-xs text-amber-600">{catalogRawError}</p>}
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500">terminology</label>

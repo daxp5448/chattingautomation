@@ -105,6 +105,10 @@ class RestaurantRead(RestaurantBase):
     slug: str
     whatsapp_phone_number_id: str | None
     whatsapp_business_account_id: str | None
+    # Presence (not the id's value itself) is what the frontend needs -- whether native
+    # WhatsApp Flow ordering is enabled. The private key is never exposed here or anywhere
+    # else via the API; only POST .../whatsapp-flow/enable|disable ever touches it.
+    whatsapp_flow_order_id: str | None
     razorpay_key_id: str | None
     status: RestaurantStatus
     trial_ends_at: datetime | None
@@ -117,6 +121,12 @@ class RestaurantRead(RestaurantBase):
     # and every per-niche demo restaurant it fans out to. The frontend uses this to
     # exclude demo restaurants from normal business lists/counts.
     is_demo: bool
+    # See app/models/restaurant.py::demo_mode_enabled -- true while this business's own
+    # WhatsApp number is temporarily repointed at the Demo Bot's industry picker instead
+    # of its normal order flow. Distinct from is_demo (which marks a restaurant as never
+    # having real customers at all).
+    demo_mode_enabled: bool
+    demo_enabled_niche_codes: list[str] | None
     # Admin-set safety cap for the Broadcast Module (app/api/v1/routers/broadcasts.py) --
     # not a live query against Meta's real messaging tier. See app/models/restaurant.py.
     broadcast_daily_cap: int
@@ -161,3 +171,19 @@ class DemoBotNicheStatus(BaseModel):
 class DemoBotStatus(BaseModel):
     sentinel_configured: bool
     niches: list[DemoBotNicheStatus]
+
+
+class DemoModeUpdate(BaseModel):
+    """Body for PATCH /restaurants/{id}/demo-mode -- Super Admin only, deliberately its
+    own tiny endpoint/schema rather than folded into RestaurantUpdate, since flipping this
+    on pauses a live business's real order-taking and shouldn't be reachable through the
+    same general-purpose PATCH an Owner can call on their own restaurant."""
+
+    enabled: bool
+    # Omitted (unset) field leaves the current selection untouched (router uses
+    # exclude_unset). Explicit null means "show every niche that has a demo restaurant" --
+    # the same default the sentinel Demo Bot restaurant has always had. Explicit []
+    # means "show nothing until niches are selected" (demo_bot_service.py's existing
+    # fallback copy for that case). Only validated against real NicheTemplate codes at the
+    # router, not here -- this schema stays a pure shape check.
+    niche_codes: list[str] | None = None

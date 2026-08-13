@@ -1,7 +1,13 @@
 import os
+import tempfile
 from pathlib import Path
 
-TEST_DB_PATH = Path(__file__).parent / "test_db.sqlite3"
+# Outside the project folder (which lives under OneDrive) on purpose: OneDrive's real-time
+# sync intercepting writes to a rapidly-rewritten SQLite file caused intermittent
+# "database is locked" / "no such table" / PermissionError test flakiness -- the same class
+# of issue that also broke the frontend's webpack cache (see that fix: node_modules/.next
+# relocated the same way). The OS temp dir is never OneDrive-synced.
+TEST_DB_PATH = Path(tempfile.gettempdir()) / "kelviontech_test_db.sqlite3"
 
 # Must be set before any `app.*` module is imported, since Settings() and the SQLAlchemy
 # engine are both created at import time. No Postgres/Docker in this dev environment, so

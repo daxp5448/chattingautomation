@@ -225,7 +225,7 @@ async def refund_order(
         if order.payment_method == PaymentMethod.RAZORPAY:
             restaurant = await RestaurantRepository(db).get(tenant_id)
             if not restaurant:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
             payment_id = (order.gateway_metadata or {}).get("payment_id")
             if not payment_id:
                 raise HTTPException(

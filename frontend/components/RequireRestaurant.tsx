@@ -9,9 +9,9 @@ export function RequireRestaurant({ children }: { children: (restaurantId: strin
   if (!restaurantId) {
     return (
       <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        No restaurant selected. Go to{" "}
+        No business selected. Go to{" "}
         <Link href="/restaurants" className="font-medium underline">
-          Restaurants
+          Businesses
         </Link>{" "}
         and select one first.
       </div>

@@ -88,6 +88,49 @@ async def test_create_rejects_non_menu_select_entry_step(client):
     assert "menu_select" in resp.json()["detail"]
 
 
+async def test_create_rejects_default_catalog_item_missing_a_name(client):
+    """default_catalog is validated against NicheCatalogCategory/NicheCatalogItem (see
+    schemas/niche_template.py) -- shape mirrors exactly what niche_provisioning.py reads
+    when a real business is provisioned from this template, so a missing item name is
+    rejected here with a normal 422 instead of KeyError-ing much later at provisioning
+    time."""
+    headers = await _register_super_admin(client)
+
+    resp = await client.post(
+        "/api/v1/niche-templates",
+        headers=headers,
+        json={
+            "code": "bad_catalog",
+            "name": "Bad Catalog",
+            "action_type": "order",
+            "welcome_message": "Hi",
+            "default_flow_steps": _welcome_steps(),
+            "default_catalog": [{"name": "Category A", "items": [{"description": "no name field"}]}],
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_update_rejects_default_catalog_category_missing_a_name(client):
+    headers = await _register_super_admin(client)
+    created = await client.post(
+        "/api/v1/niche-templates",
+        headers=headers,
+        json={
+            "code": "good_catalog", "name": "Good Catalog", "action_type": "order",
+            "welcome_message": "Hi", "default_flow_steps": _welcome_steps(),
+        },
+    )
+    template_id = created.json()["id"]
+
+    resp = await client.patch(
+        f"/api/v1/niche-templates/{template_id}",
+        headers=headers,
+        json={"default_catalog": [{"icon_image": "https://example.com/a.jpg", "items": []}]},
+    )
+    assert resp.status_code == 422
+
+
 async def test_owner_cannot_create_niche_template(db_session, client):
     from app.core.security import encrypt_secret, hash_password
     from app.models.enums import UserRole

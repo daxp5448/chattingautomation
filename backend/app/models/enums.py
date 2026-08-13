@@ -150,6 +150,11 @@ class FlowStepType(str, enum.Enum):
     API_CALL = "api_call"
     HUMAN_HANDOFF = "human_handoff"
     AI_RESPONSE = "ai_response"
+    # Opens a native WhatsApp Flow instead of a chat message -- see
+    # generic_flow_engine.py's _render_step and the approved "WhatsApp Flows for
+    # Ordering" plan. Waits for customer input (the Flow's own final submit), same as
+    # MENU_SELECT -- not one of the 5 auto-advancing types above.
+    SEND_WHATSAPP_FLOW = "send_whatsapp_flow"
 
 
 # --- WhatsApp Template Manager (app/services/whatsapp_template_client.py) -----------

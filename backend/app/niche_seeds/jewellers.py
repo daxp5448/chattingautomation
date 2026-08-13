@@ -1,48 +1,47 @@
-"""Jewellers niche template -- an `action_type="order"` niche (cart + quantity +
-checkout + payment link) for the generic conversation engine (see
+"""Jewellers niche template -- an `action_type="inquiry"` niche (enquiry/appointment
+lead capture, no cart, no payment) for the generic conversation engine (see
 app/services/generic_flow_engine.py, whose module docstring and step-shape contract this
-file's `default_flow_steps` implements exactly). This is a straight re-skin of the
-Restaurant proof niche (app/niche_seeds/restaurant.py) -- identical step shape, same
-cart/quantity/checkout/payment-link mechanics, just jewellery content on top.
+file's `default_flow_steps` implements exactly).
+
+RESTRUCTURED from a cart/checkout "order" niche to an enquiry-led niche: high-value
+jewellery purchases are enquiry/appointment-driven, not one-tap-checkout, so this niche
+now shares Real Estate's inquiry flow shape (app/niche_seeds/real_estate.py) instead of
+Restaurant's order flow -- "listing" becomes "piece", "budget range" becomes "preferred
+visit", everything else about the shape is identical. No cart/quantity/checkout/payment
+step exists anywhere in this file any more.
 
 `TEMPLATE` matches app/models/niche_template.py's column shapes 1:1 -- see
 app/services/niche_provisioning.py for how it's copied into a brand-new business's own
 catalog_categories/catalog_items/flow_definitions rows at creation time, and
 app/tests/test_niche_jewellers.py for an end-to-end proof this drives a real
-conversation through the real engine, including cart, checkout, and a Razorpay payment
-link.
+conversation through the real engine.
 
-Order-flow shape (context keys a completed order's Engagement.details carries):
-  category_id -> item_id (via pending_item, not a bare capture_key) -> qty -> cart
-  (list of {item_id, name, price, qty}) -> delivery_address (+ optional coords) ->
-  cart_summary/cart_total (recomputed by the engine's add_to_cart/remove_cart_line verbs
-  after every cart mutation -- see generic_flow_engine.py::_Engine._refresh_cart_summary).
-`create_engagement` reads its EngagementType off the FlowDefinition itself (not off any
-step) and sets requires_payment=True automatically whenever the cart is non-empty.
+Inquiry-flow shape (context keys a completed inquiry's Engagement.details carries):
+  category_id -> item_id (captured directly via capture_key, PLUS action=
+  "capture_pending_item" so pending_item_name/pending_item_price are also available to
+  render) -> preferred_visit -> requirements, plus an optional customer_name_override if
+  the customer edited the WhatsApp-profile-sourced name. There is no cart/staff/date/time
+  anywhere in this flow -- a jewellery enquiry is exactly one piece of interest plus
+  free-text notes, captured directly into named context keys, then read back by the
+  final `confirm_action` step's `create_engagement` action. Because `cart` is always
+  empty here, `create_engagement` sets `requires_payment=False` automatically
+  (`bool(cart)`) -- no special-casing needed for "this niche never charges online".
 
-Item/button titles are all kept to <=20 characters: WhatsApp truncates quick-reply
-button titles at 20 chars, and every category here has <=3 items so item_select renders
-as reply buttons (not a list) -- see generic_flow_engine.py's `len(all_options) <= 3`
-list-vs-buttons switch.
+  Between picking a piece and being asked for a visit preference, `piece_details` shows
+  EVERY active photo curated for that piece (front/side/worn-on-hand/etc, each with its
+  own caption, in Super-Admin-set order) -- not just one representative image. See
+  app/services/image_presenter.py and generic_flow_engine.py's item_context_key handling.
+
+Both welcome buttons that lead into browsing ("Explore Collection" and "Book
+Appointment") route to the same category_select entry point deliberately -- discussing
+an appointment for a specific piece starts the same way as browsing it, and this avoids
+a separate item-less appointment path that would leave `{{item_id_label}}` unset in the
+review/confirmation prompts below.
 """
 
 from app.niche_seeds._media import demo_image_base
 
 
-_PLACEHOLDER = "https://placehold.co/{size}?text={text}"
-
-
-def _img(size: str, text: str) -> str:
-    return _PLACEHOLDER.format(size=size, text=text.replace(" ", "+").replace("&", "%26"))
-
-
-# Real demo photos (Wikimedia Commons, free-licensed), uploaded to this deployment's own
-# S3/MinIO bucket for a permanent (non-expiring) URL -- see
-# backend/scripts/demo_asset_upload.py. The base URL comes from
-# settings.PUBLIC_MEDIA_BASE_URL (see app/niche_seeds/_media.py) -- defaults to raw
-# MinIO (only reachable from this machine); point it at a publicly-tunnelled URL or a
-# real bucket before testing on a real WhatsApp number (same requirement GOING_LIVE.md
-# documents for the webhook itself), then re-run sync_niche_templates once.
 _DEMO_IMG_BASE = demo_image_base("jewellers")
 _IMG_WELCOME = f"{_DEMO_IMG_BASE}/welcome.jpg"
 _IMG_GOLD = f"{_DEMO_IMG_BASE}/gold.jpg"
@@ -50,20 +49,23 @@ _IMG_DIAMOND = f"{_DEMO_IMG_BASE}/diamond.jpg"
 _IMG_SILVER = f"{_DEMO_IMG_BASE}/silver.jpg"
 _IMG_BRIDAL = f"{_DEMO_IMG_BASE}/bridal.jpg"
 
+_WELCOME_TEXT = "\U0001f48d Welcome to {{business_name}}! Discover exquisite jewellery, made to be seen in person."
+
 
 TEMPLATE = {
     "code": "jewellers",
     "name": "Jewellers",
-    "action_type": "order",
+    "action_type": "inquiry",
     "icon": "\U0001f48d",  # 💍
-    "welcome_message": "\U0001f48d Welcome to [Business Name]! Discover exquisite jewellery and shop with ease.",
+    "welcome_message": _WELCOME_TEXT,
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
-        {"id": "welcome:shop", "title": "\U0001f6cd️ Shop Now"},
-        {"id": "welcome:collection", "title": "\U0001f48e View Collection"},
+        {"id": "welcome:explore", "title": "\U0001f48e Explore Collection"},
+        {"id": "welcome:appointment", "title": "\U0001f4c5 Book Appointment"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
-        {"id": "welcome:store", "title": "\U0001f4cd Our Store"},
+        {"id": "welcome:store", "title": "\U0001f4cd Visit Our Store"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -147,26 +149,31 @@ TEMPLATE = {
             ],
         },
     ],
-    # See app/models/flow_definition.py for the exact per-step shape.
+    # See app/models/flow_definition.py for the exact per-step shape. Steps map onto
+    # welcome -> category -> piece -> piece details (photo gallery) -> preferred visit ->
+    # requirements -> name confirm -> inquiry confirm -> submitted, plus side-branch
+    # "message"/human_handoff steps off welcome that don't lead into the lead-capture chain.
     "default_flow_steps": [
         {
             "step_id": "welcome",
             "type": "menu_select",
-            "prompt": "\U0001f48d Welcome to {{restaurant_name}}! Discover exquisite jewellery and shop with ease.",
+            "prompt": _WELCOME_TEXT,
             "buttons_from": "static",
             "static_options": [
-                {"id": "welcome:shop", "title": "\U0001f6cd️ Shop Now"},
-                {"id": "welcome:collection", "title": "\U0001f48e View Collection"},
+                {"id": "welcome:explore", "title": "\U0001f48e Explore Collection"},
+                {"id": "welcome:appointment", "title": "\U0001f4c5 Book Appointment"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
-                {"id": "welcome:store", "title": "\U0001f4cd Our Store"},
+                {"id": "welcome:store", "title": "\U0001f4cd Visit Our Store"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
-                "welcome:shop": "category_select",
-                "welcome:collection": "category_select",
+                "welcome:explore": "category_select",
+                "welcome:appointment": "category_select",
                 "welcome:offers": "offers_info",
                 "welcome:store": "location_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
@@ -175,26 +182,40 @@ TEMPLATE = {
         {
             "step_id": "offers_info",
             "type": "message",
-            "prompt": "\U0001f381 Ask our team about today's special offers and festive discounts any time you shop!",
+            "prompt": "\U0001f381 Ask our team about today's special offers and festive discounts any time you enquire!",
             "back_target": "welcome",
         },
         {
             "step_id": "location_info",
             "type": "message",
-            "prompt": "\U0001f4cd You'll find {{restaurant_name}} details and directions here -- message us if you need help finding us!",
+            "prompt": (
+                "\U0001f4cd {{business_name}}\n\n[Address will appear here once the business "
+                "adds it in Settings.]\n\nTap \U0001f9d1 Talk to a Human if you'd like directions right now."
+            ),
             "back_target": "welcome",
         },
         {
             "step_id": "contact_info",
             "type": "message",
-            "prompt": "\U0001f4de You can reach {{restaurant_name}} right here on WhatsApp any time.",
+            "prompt": (
+                "\U0001f4de {{business_name}}\n\nPhone: [add your number in Settings]\n"
+                "Hours: [add your hours in Settings]\n\n"
+                "Or tap \U0001f9d1 Talk to a Human from the main menu to chat with our team right now."
+            ),
             "back_target": "welcome",
         },
         {
-            # Step 2: "Shop Now"/"View Collection" tapped -> Category list. [Back -> Welcome]
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our jewellery expert at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
+        },
+        {
+            # "Explore Collection"/"Book Appointment" tapped -> Category list.
+            # [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
-            "prompt": "What would you like to shop for?",
+            "prompt": "What would you like to explore?",
             "buttons_from": "categories",
             "capture_key": "category_id",
             "back_target": "welcome",
@@ -203,93 +224,114 @@ TEMPLATE = {
             "section_title": "Categories",
         },
         {
-            # Step 3: Category tapped -> Item list (name + price, tap = select).
+            # Category tapped -> Piece list (name + price, tap = select).
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
-            "prompt": "Here's our {{category_id_label}} collection -- tap a piece to select it:",
+            "prompt": "Here's our {{category_id_label}} collection -- tap a piece to enquire about it:",
             "buttons_from": "items",
             "category_context_key": "category_id",
+            "capture_key": "item_id",
             "action": "capture_pending_item",
             "back_target": "category_select",
-            "next": "quantity_select",
+            "next": "piece_details",
             "show_image": True,
-            "section_title": "Items",
+            "section_title": "Pieces",
         },
         {
-            # Step 4: Item tapped -> Quantity buttons (1/2/3/Custom), adds to cart.
-            # [Back -> Item list]
-            "step_id": "quantity_select",
-            "type": "quantity_input",
-            "prompt": "How many *{{pending_item_name}}* ({{pending_item_price}}) would you like?",
-            "action": "add_to_cart",
-            "back_target": "item_select",
-            "next": "cart_menu",
-            "show_image": False,
-        },
-        {
-            # Step 5: Cart menu -- Add More Items / Checkout. [Back -> Category list]
-            "step_id": "cart_menu",
+            # Piece tapped -> its own detail view: every active photo Super Admin has
+            # curated for this piece (see app/services/image_presenter.py), each with its
+            # own caption, in order -- not just one representative photo. See
+            # generic_flow_engine.py::_Engine._send_options's item_context_key branch.
+            # [Back -> Piece list]
+            "step_id": "piece_details",
             "type": "menu_select",
-            "prompt": "\U0001f6cd️ Your cart so far:\n\n{{cart_summary}}\n\nTotal: {{currency}} {{cart_total}}\n\nWhat next?",
+            "prompt": "*{{item_id_label}}*\n{{pending_item_price}}\n\nTake a look, then tap below when you're ready to enquire.",
+            "item_context_key": "item_id",
+            "show_image": True,
+            "buttons_from": "static",
+            "static_options": [{"id": "piece:enquire", "title": "Enquire About This Piece"}],
+            "routes": {"piece:enquire": "visit_capture"},
+            "next": "visit_capture",
+            "back_target": "item_select",
+        },
+        {
+            # Optional preferred visit note. [Back -> Piece details]
+            "step_id": "visit_capture",
+            "type": "free_text_input",
+            "prompt": "Would you like to visit us to see *{{item_id_label}}* in person? Let us know your preferred day/time (or tap Skip to enquire online instead):",
+            "capture_key": "preferred_visit",
+            "allow_skip": True,
+            "back_target": "piece_details",
+            "next": "requirements_capture",
+        },
+        {
+            # Optional free-form requirements (customization/budget). [Back -> visit note]
+            "step_id": "requirements_capture",
+            "type": "free_text_input",
+            "prompt": "Any customization or budget preferences we should know? (or tap Skip)",
+            "capture_key": "requirements",
+            "allow_skip": True,
+            "back_target": "visit_capture",
+            "next": "name_confirm",
+        },
+        {
+            # Name confirmation, auto-pulled from the WhatsApp profile and editable via
+            # a button. [Back -> requirements note]
+            "step_id": "name_confirm",
+            "type": "menu_select",
+            "prompt": "Please confirm the name we should use for this enquiry: *{{customer_name}}*",
             "buttons_from": "static",
             "static_options": [
-                {"id": "cart:add_more", "title": "➕ Add More Items"},
-                {"id": "cart:checkout", "title": "✅ Checkout"},
+                {"id": "name:confirm", "title": "Looks Good"},
+                {"id": "name:edit", "title": "Edit Name"},
             ],
             "routes": {
-                "cart:add_more": "category_select",
-                "cart:checkout": "address_capture",
+                "name:confirm": "inquiry_confirm",
+                "name:edit": "name_edit",
             },
-            "next": "address_capture",
-            "back_target": "category_select",
+            "next": "inquiry_confirm",
+            "back_target": "requirements_capture",
             "show_image": False,
         },
         {
-            # Step 6: Delivery address -- free text or native WhatsApp location share,
-            # skippable for in-store pickup. [Back -> Cart menu]
-            "step_id": "address_capture",
+            "step_id": "name_edit",
             "type": "free_text_input",
-            "prompt": "Please share your delivery address (or tap Skip for in-store pickup):",
-            "capture_key": "delivery_address",
-            "allow_skip": True,
-            "accepts_location": True,
-            "back_target": "cart_menu",
-            "next": "order_confirm",
+            "prompt": "Please type the name we should use for this enquiry:",
+            "capture_key": "customer_name_override",
+            "allow_skip": False,
+            "next": "inquiry_confirm",
+            "back_target": "name_confirm",
         },
         {
-            # Step 7: Order confirmation card (items, total, address) -> "Place Order".
-            # [Back -> delivery address]
-            "step_id": "order_confirm",
+            # Enquiry review card -> "Submit Enquiry" button. [Back -> name confirmation]
+            "step_id": "inquiry_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your order:\n\n"
-                "{{cart_summary}}\n\n"
-                "Total: {{currency}} {{cart_total}}\n"
-                "\U0001f4cd Delivery: {{delivery_address}}\n\n"
-                "Tap below to place your order."
+                "Please review your enquiry:\n\n"
+                "\U0001f48d Piece: {{item_id_label}}\n"
+                "\U0001f4c5 Preferred Visit: {{preferred_visit}}\n"
+                "\U0001f4dd Notes: {{requirements}}\n\n"
+                "Tap below to submit."
             ),
             "buttons_from": "static",
-            "static_options": [{"id": "order:confirm", "title": "✅ Place Order"}],
+            "static_options": [{"id": "inquiry:submit", "title": "Submit Enquiry"}],
             "action": "create_engagement",
-            "back_target": "address_capture",
-            "next": "order_confirmed",
+            "back_target": "name_confirm",
+            "next": "inquiry_confirmed",
             "show_image": False,
         },
         {
-            # Step 8: Confirmed -> confirmation + payment link (create_engagement
-            # generates a real Razorpay payment link whenever the cart total is
-            # non-zero -- see app/services/payment/generic_razorpay.py);
-            # notify_business() (called unconditionally inside create_engagement)
-            # notifies staff. Flow complete -- terminal, no Back.
-            "step_id": "order_confirmed",
+            # Submitted -> confirmation message (no payment, no cart -- a lead, not a
+            # purchase); notify_business() (called unconditionally inside
+            # create_engagement's create_engagement action, step above) notifies staff.
+            # Flow complete -- terminal, no Back.
+            "step_id": "inquiry_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Order placed! Reference: {{last_reference_number}}.\n\n"
-                "Total: {{currency}} {{last_total}}\n"
-                "{{payment_link_url}}\n\n"
-                "Our team will get your order ready with care. Thank you for choosing "
-                "{{restaurant_name}}!"
+                "✅ Thank you! Your enquiry has been submitted. Reference: {{last_reference_number}}.\n\n"
+                "Our jewellery expert will reach out shortly to discuss {{item_id_label}} and arrange a "
+                "visit if you'd like."
             ),
             "back_target": None,
             "terminal": True,
@@ -297,16 +339,15 @@ TEMPLATE = {
     ],
     "terminology": {
         "status_labels": {
-            "new": "Received",
-            "confirmed": "Confirmed",
-            "in_progress": "Preparing",
-            "completed": "Delivered",
-            "cancelled": "Cancelled",
+            "new": "New Lead",
+            "confirmed": "Contacted",
+            "in_progress": "Follow-up",
+            "completed": "Closed",
+            "cancelled": "Not Interested",
         },
         "catalog_label": "Collection",
-        "category_label": "Category",
-        "item_label": "Item",
-        "staff_label": "Staff",
+        "category_label": "Jewellery Category",
+        "item_label": "Piece",
     },
     "default_modules": {},
 }

@@ -100,6 +100,44 @@ class OutboundMessage:
         )
 
     @classmethod
+    def flow(
+        cls, to: str, body: str, flow_id: str, flow_token: str, cta: str,
+        screen: str, data: dict[str, Any] | None = None,
+    ) -> "OutboundMessage":
+        """Opens a native WhatsApp Flow (see app/services/whatsapp_flow_order_service.py
+        and the approved "WhatsApp Flows for Ordering" plan) -- a multi-screen form inside
+        WhatsApp, not a chat message. Shape verified directly against Meta's current docs
+        (flow_message_version "3" is a fixed literal, not this platform's own API
+        version). `flow_action="navigate"` with the first screen's data embedded here
+        means the very first screen doesn't need a data_exchange round-trip -- only
+        screen 2 onward calls the data-exchange webhook (see webhook.py's
+        receive_flow_data_exchange).
+        """
+        return cls(
+            to,
+            {
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "flow",
+                    "body": {"text": body[:1024]},
+                    "action": {
+                        "name": "flow",
+                        "parameters": {
+                            "flow_message_version": "3",
+                            "flow_token": flow_token,
+                            "flow_id": flow_id,
+                            "flow_cta": cta[:30],
+                            "flow_action": "navigate",
+                            "flow_action_payload": {"screen": screen, "data": data or {}},
+                        },
+                    },
+                },
+            },
+        )
+
+    @classmethod
     def template(cls, to: str, name: str, language: str, variable_values: list[str] | None = None) -> "OutboundMessage":
         """A Meta-approved Message Template send -- the only way to message a customer
         outside the 24-hour customer-service window (see app/services/
@@ -216,9 +254,28 @@ class GraphAPIWhatsAppSender:
                 if exc.response.status_code < 500:
                     # 4xx is permanent (bad payload/recipient/token) -- retrying won't help.
                     raise
+                # 5xx is Meta explicitly telling us the request was NOT accepted -- safe
+                # to retry, same as a connect failure below.
                 last_exc = exc
-            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+                # The TCP connection never opened (or never got a slot) -- Meta never saw
+                # this request, so retrying cannot produce a duplicate send.
                 last_exc = exc
+            except (httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+                # Deliberately NOT retried, unlike the connect-phase failures above: once
+                # the request has been written (or is being written), Meta may already
+                # have received and processed it -- we just never got the response back.
+                # Retrying here is exactly the "duplicate outbound WhatsApp message" risk
+                # flagged by the platform audit (a timeout does not mean the send failed).
+                # Failing fast on the FIRST such timeout is safer than silently risking a
+                # customer-visible duplicate message.
+                logger.error(
+                    "WhatsApp send timed out with an ambiguous outcome (request may have "
+                    "reached Meta) -- not retrying to avoid a duplicate send: "
+                    "phone_number_id=%s type=%s",
+                    phone_number_id, message.payload.get("type"),
+                )
+                raise
 
             if attempt < _MAX_SEND_ATTEMPTS - 1:
                 backoff = min(2**attempt, _MAX_BACKOFF_SECONDS)

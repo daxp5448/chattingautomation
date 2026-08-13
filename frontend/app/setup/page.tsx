@@ -96,7 +96,7 @@ function SetupForm() {
             K
           </div>
           <h1 className="text-xl font-semibold text-slate-900">Set your password</h1>
-          <p className="text-sm text-slate-500">Choose a password for your restaurant's dashboard login.</p>
+          <p className="text-sm text-slate-500">Choose a password for your business's dashboard login.</p>
         </div>
 
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}

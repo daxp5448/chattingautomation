@@ -41,7 +41,7 @@ function PackageEditor({
   }
 
   async function remove() {
-    if (!window.confirm(`Delete "${pkg.name}"? Restaurants already assigned to it keep their current features unchanged -- this only affects future assignment.`)) return;
+    if (!window.confirm(`Delete "${pkg.name}"? Businesses already assigned to it keep their current features unchanged -- this only affects future assignment.`)) return;
     try {
       await apiFetch(`/feature-packages/${pkg.id}`, { method: "DELETE" });
       onDeleted();
@@ -61,7 +61,7 @@ function PackageEditor({
         <div className="flex items-end">
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
-            Default for new restaurants
+            Default for new businesses
           </label>
         </div>
         <div className="col-span-2">

@@ -13,8 +13,14 @@ Restaurant.uses_generic_engine=True business), inspecting the InMemoryWhatsAppSe
 Every `back_target` in the flow is exercised at least once: category_select->welcome,
 item_select->category_select, budget_capture->item_select,
 requirements_capture->budget_capture, name_confirm->requirements_capture,
-name_edit->name_confirm, inquiry_confirm->name_confirm, and the four side-branch message
-steps (list_property_info/offers_info/location_info/contact_info) -> welcome.
+name_edit->name_confirm, inquiry_confirm->name_confirm, list_property_confirm->
+list_property_capture, and the side-branch message steps (offers_info/location_info/
+contact_info/human_handoff) -> welcome.
+
+The "List My Property" welcome entry used to dead-end at a static message whose reply
+was never captured anywhere (see niche_seeds/real_estate.py's module docstring); it is
+now a real two-step lead capture (list_property_capture -> list_property_confirm ->
+list_property_confirmed), covered below by its own dedicated test.
 """
 
 import itertools
@@ -187,9 +193,8 @@ async def test_side_branch_messages_return_to_welcome(db_session, real_estate_te
     customer = await _get_customer(db_session, restaurant.id)
 
     cases = [
-        ("welcome:list_property", "list_property_info", "list your property"),
         ("welcome:offers", "offers_info", "offers"),
-        ("welcome:office", "location_info", "office"),
+        ("welcome:office", "location_info", "directions"),
         ("welcome:contact", "contact_info", "sales team"),
     ]
     for button_id, step_id, expected_snippet in cases:
@@ -233,7 +238,7 @@ async def test_full_inquiry_flow_with_back_navigation(db_session, real_estate_te
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "Hi", profile_name=CUSTOMER_PROFILE_NAME)
     welcome_options = _extract_options(_last_interactive(sender))
     assert [o["id"] for o in welcome_options] == [
-        "welcome:browse", "welcome:list_property", "welcome:offers", "welcome:office", "welcome:contact",
+        "welcome:browse", "welcome:list_property", "welcome:offers", "welcome:office", "welcome:contact", "welcome:human",
     ]
     customer = await _get_customer(db_session, restaurant.id)
     assert customer.name == CUSTOMER_PROFILE_NAME  # auto-pulled from the WhatsApp profile
@@ -445,3 +450,96 @@ async def test_name_edit_branch_captures_override_and_continues(db_session, real
     assert engagement.details["customer_name_override"] == "Neha K."
     assert engagement.details["budget_range"] is None
     assert engagement.details["requirements"] is None
+
+
+# --- "List My Property" lead capture (previously a dead-end message) --------------------
+
+
+async def test_list_my_property_creates_a_tracked_lead(db_session, real_estate_tenant, sender):
+    """Previously a dead-end static message whose reply was discarded; now a real
+    free_text_input -> confirm_action chain that produces a tracked Engagement lead,
+    reusing the same create_engagement action verb the browse-a-listing flow uses."""
+    restaurant = real_estate_tenant
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:list_property")
+
+    customer = await _get_customer(db_session, restaurant.id)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "list_property_capture"
+
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "3BHK in Andheri West, ready to move, asking 1.2 crore")
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "list_property_confirm"
+    assert state.context["property_listing_details"] == "3BHK in Andheri West, ready to move, asking 1.2 crore"
+    confirm_body = _body_text(_last_interactive(sender))
+    assert "3BHK in Andheri West" in confirm_body
+    confirm_options = _extract_options(_last_interactive(sender))
+    assert {o["id"] for o in confirm_options} == {"listing:submit", generic_flow_engine.BACK_REPLY_ID}
+
+    #     Back -> details capture, details survive, then forward again ----------------------
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, generic_flow_engine.BACK_REPLY_ID)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "list_property_capture"
+    assert state.context["property_listing_details"] == "3BHK in Andheri West, ready to move, asking 1.2 crore"
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "3BHK in Andheri West, ready to move, asking 1.2 crore")
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "list_property_confirm"
+
+    engagements_before = (await db_session.execute(select(Engagement))).scalars().all()
+    assert len(engagements_before) == 0
+
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "listing:submit")
+
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "list_property_confirmed"
+
+    engagements = (await db_session.execute(select(Engagement).where(Engagement.restaurant_id == restaurant.id))).scalars().all()
+    assert len(engagements) == 1
+    engagement = engagements[0]
+    assert engagement.type == EngagementType.INQUIRY
+    assert engagement.status == EngagementStatus.NEW
+    assert engagement.customer_id == customer.id
+    assert engagement.requires_payment is False
+    assert engagement.details["property_listing_details"] == "3BHK in Andheri West, ready to move, asking 1.2 crore"
+
+    confirmed_message = _last_message_to(sender, CUSTOMER_PHONE)
+    confirmed_body = _body_text(confirmed_message)
+    assert "thanks" in confirmed_body.lower()
+    assert engagement.reference_number in confirmed_body
+
+    staff_message = _last_message_to(sender, restaurant.staff_notification_number)
+    assert "New inquiry" in _body_text(staff_message)
+
+
+async def test_list_my_property_skip_still_reaches_confirm_with_empty_details(db_session, real_estate_tenant, sender):
+    """Skip on list_property_capture ("talk to an agent instead") must still land on the
+    review/confirm step, just with no details typed -- not a dead end."""
+    restaurant = real_estate_tenant
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:list_property")
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, generic_flow_engine.SKIP_REPLY_ID)
+
+    customer = await _get_customer(db_session, restaurant.id)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "list_property_confirm"
+    assert state.context["property_listing_details"] is None
+
+
+async def test_talk_to_human_hands_off_and_pauses_automation(db_session, real_estate_tenant, sender):
+    """The welcome menu's new "Talk to a Human" entry (human_handoff step type) must set
+    is_handed_over and stop the automated flow from advancing on further messages."""
+    restaurant = real_estate_tenant
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:human")
+
+    customer = await _get_customer(db_session, restaurant.id)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"
+    assert state.is_handed_over is True
+    handoff_message = _last_message_to(sender, CUSTOMER_PHONE)
+    assert "connecting" in _body_text(handoff_message).lower()
+
+    # Automation stays paused -- a further message doesn't advance the flow.
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hello?")
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"

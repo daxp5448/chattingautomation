@@ -81,3 +81,22 @@ class Image(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         GUID(), ForeignKey("images.id", ondelete="SET NULL"), nullable=True
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- Per-image WhatsApp presentation metadata --------------------------------------
+    # A catalog item can carry more than one image (front/side/detail/worn-on-hand, etc.)
+    # -- these three fields are what let Super Admin curate that set instead of the engine
+    # only ever having "the first image somebody happened to upload." See
+    # app/services/image_presenter.py, which is the one place that reads all three when
+    # deciding what the bot actually sends.
+    caption: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    alt_text: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Lower sorts first. Defaults to 0 (not an auto-incrementing "next" value) -- every
+    # pre-existing image before this column existed sorts identically to a freshly
+    # uploaded one with no order set yet, both landing at upload/created_at order via the
+    # repository's stable secondary sort. A Super Admin only needs to set this once they
+    # actually want a specific order.
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Lets an admin temporarily hide one image from the bot (e.g. a bad angle) without
+    # deleting it -- distinct from deleted_at, which is permanent/irreversible from the
+    # customer-facing side. Defaults True so every pre-existing image stays visible.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

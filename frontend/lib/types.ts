@@ -19,6 +19,14 @@ export interface Restaurant {
   // True for the sentinel Demo Bot restaurant and every per-niche demo restaurant it
   // fans out to (see backend app/services/demo_bot_service.py) -- not a real business.
   is_demo: boolean;
+  // True while THIS business's own WhatsApp number is temporarily repointed at the Demo
+  // Bot's industry picker instead of its normal order flow -- distinct from is_demo,
+  // which marks a restaurant as never having real customers at all. See
+  // PATCH /restaurants/{id}/demo-mode.
+  demo_mode_enabled: boolean;
+  // Which NicheTemplate codes appear in the picker while demo_mode_enabled is on. null
+  // means every niche with a demo restaurant provisioned.
+  demo_enabled_niche_codes: string[] | null;
   // Admin-set safety cap for the Broadcast Module -- not a live query against Meta's
   // real messaging tier. See /broadcasts.
   broadcast_daily_cap: number;
@@ -30,6 +38,9 @@ export interface Restaurant {
   enabled_features: string[] | null;
   whatsapp_phone_number_id: string | null;
   whatsapp_business_account_id: string | null;
+  // Set once native WhatsApp Flow ordering is enabled (POST .../whatsapp-flow/enable) --
+  // see components/WhatsAppFlowToggle.tsx.
+  whatsapp_flow_order_id: string | null;
   payment_methods: string[];
   default_payment_method: string;
   razorpay_key_id: string | null;
@@ -74,9 +85,29 @@ export interface ImageRecord {
   low_quality_reason: string | null;
   replaced_by_image_id: string | null;
   variants: Record<string, ImageVariant>;
+  // Presentation metadata the bot reads when sending this image -- see
+  // backend app/models/image.py and app/services/image_presenter.py. Editable via
+  // PATCH /restaurants/{id}/images/{image_id} (metadata-only, no re-upload/reprocess).
+  caption: string | null;
+  alt_text: string | null;
+  display_order: number;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
   urls: Record<string, string>;
+}
+
+// GET /restaurants/{id}/images/library -- the Media Library page's restaurant-wide
+// browse/search endpoint (distinct from the catalog_item_id-required GET above). Adds
+// the owning CatalogItem's identity so the page can show "used by: <item name>".
+export interface CatalogItemRef {
+  id: string;
+  name: string;
+  category_id: string;
+}
+
+export interface ImageLibraryEntry extends ImageRecord {
+  catalog_item: CatalogItemRef | null;
 }
 
 // GET/POST/PATCH /image-type-profiles -- the Super-Admin-editable "add a new image type
@@ -114,6 +145,23 @@ export interface NicheTemplateSummary {
   icon: string;
 }
 
+// Mirrors backend/app/schemas/niche_template.py's NicheCatalogItem/NicheCatalogCategory --
+// the shape niche_provisioning.py reads when a business is created from this template.
+export interface NicheCatalogItem {
+  name: string;
+  description?: string | null;
+  price?: number | null;
+  price_type?: string;
+  images?: string[];
+  attributes?: Record<string, unknown>;
+}
+
+export interface NicheCatalogCategory {
+  name: string;
+  icon_image?: string | null;
+  items?: NicheCatalogItem[];
+}
+
 // GET/POST/PATCH /niche-templates/{id} -- full detail, Super-Admin CRUD. `welcome_buttons`
 // is deliberately NOT included here -- confirmed dead at runtime (only
 // default_flow_steps[entry_step_id].static_options actually drives a provisioned
@@ -126,7 +174,7 @@ export interface NicheTemplateFull {
   icon: string | null;
   welcome_message: string;
   welcome_banner_image: string | null;
-  default_catalog: Record<string, unknown>[];
+  default_catalog: NicheCatalogCategory[];
   default_flow_steps: FlowStep[];
   default_ui_layout: Record<string, { x: number; y: number }>;
   terminology: Record<string, unknown>;
@@ -161,7 +209,8 @@ export type FlowStepType =
   | "delay"
   | "api_call"
   | "human_handoff"
-  | "ai_response";
+  | "ai_response"
+  | "send_whatsapp_flow";
 
 export type FlowStep = { step_id: string; type: FlowStepType; [key: string]: unknown };
 
@@ -278,11 +327,52 @@ export interface Product {
   tags: string[];
 }
 
+// GET/POST/PATCH/DELETE /restaurants/{id}/catalog-categories|catalog-items -- the
+// generic-engine counterpart of Category/Product above, for niche-provisioned businesses
+// (see backend/app/api/v1/routers/catalog.py). Deliberately separate types: a completely
+// different set of DB tables (CatalogCategory/CatalogItem), not just a naming variant.
+export interface CatalogCategoryRow {
+  id: string;
+  name: string;
+  display_order: number;
+  visible: boolean;
+  image_url: string | null;
+}
+
+export interface CatalogItemRow {
+  id: string;
+  category_id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  price_type: string;
+  images: string[];
+  available: boolean;
+  is_featured: boolean;
+  display_order: number;
+  stock_quantity: number | null;
+  attributes: Record<string, unknown>;
+}
+
 export interface BotMessage {
   id: string;
   restaurant_id: string;
   key: string;
   content: string;
+}
+
+// The generic-engine equivalent of BotMessage -- one entry per text-bearing flow step,
+// see backend/app/services/message_catalog.py. Returned by GET /restaurants/{id}/flow/
+// messages (a business's own flow) and GET /niche-templates/{id}/messages (Super
+// Admin's niche-template defaults) -- the latter never sets is_customized/default_text.
+export interface MessageEntry {
+  step_id: string;
+  field: "prompt" | "message";
+  message_key: string;
+  text: string;
+  step_type: string;
+  is_customized: boolean | null;
+  default_text: string | null;
 }
 
 export interface BotButton {

@@ -351,7 +351,7 @@ async def test_full_appointment_booking_flow_with_back_navigation(db_session, sa
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "Hi", profile_name=CUSTOMER_PROFILE_NAME)
     welcome_options = _extract_options(_last_interactive(sender))
     assert [o["id"] for o in welcome_options] == [
-        "welcome:book", "welcome:services", "welcome:offers", "welcome:location", "welcome:contact",
+        "welcome:book", "welcome:offers", "welcome:location", "welcome:contact", "welcome:human",
     ]
     customer = await _get_customer(db_session, restaurant.id)
     assert customer.name == CUSTOMER_PROFILE_NAME  # auto-pulled from the WhatsApp profile
@@ -578,3 +578,23 @@ async def test_name_edit_branch_captures_override_and_continues(db_session, salo
     state = await _get_state(db_session, customer.id)
     assert state.current_step == "booking_confirm"
     assert state.context["customer_name_override"] == "Asha V."
+
+
+async def test_talk_to_human_hands_off_and_pauses_automation(db_session, salon_tenant, sender):
+    """The welcome menu's new "Talk to a Human" entry (human_handoff step type) must set
+    is_handed_over and stop the automated flow from advancing on further messages."""
+    restaurant = salon_tenant
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:human")
+
+    customer = await _get_customer(db_session, restaurant.id)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"
+    assert state.is_handed_over is True
+    handoff_message = _last_message_to(sender, CUSTOMER_PHONE)
+    assert "connecting" in _body_text(handoff_message).lower()
+
+    # Automation stays paused -- a further message doesn't advance the flow.
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hello?")
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"

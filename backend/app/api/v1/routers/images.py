@@ -10,7 +10,7 @@ from app.models.user import User
 from app.repositories.catalog_repository import CatalogItemRepository
 from app.repositories.image_repository import ImageRepository
 from app.repositories.image_type_profile_repository import ImageTypeProfileRepository
-from app.schemas.image import ImageCropRequest, ImageRead
+from app.schemas.image import CatalogItemRef, ImageCropRequest, ImageLibraryEntry, ImageMetadataUpdate, ImageRead
 from app.services import image_pipeline, image_storage_service
 from app.services.image_pipeline import ImageValidationError
 
@@ -21,14 +21,18 @@ router = APIRouter(prefix="/restaurants/{restaurant_id}/images", tags=["images"]
 _MANAGE_IMAGES = require_roles(UserRole.OWNER, UserRole.MANAGER)
 
 
-def _with_urls(image: Image) -> ImageRead:
-    read = ImageRead.model_validate(image)
+def _populate_urls(read: ImageRead, image: Image) -> None:
     urls: dict[str, str] = {}
     if image.status == "ready":
         urls["original"] = image_storage_service.public_url(image.original_key)
         for name, variant in (image.variants or {}).items():
             urls[name] = image_storage_service.public_url(variant["key"])
     read.urls = urls
+
+
+def _with_urls(image: Image) -> ImageRead:
+    read = ImageRead.model_validate(image)
+    _populate_urls(read, image)
     return read
 
 
@@ -52,6 +56,9 @@ async def upload_image(
     image_type: str = Form(...),
     catalog_item_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
+    caption: str | None = Form(None),
+    alt_text: str | None = Form(None),
+    display_order: int = Form(0),
     user: User = Depends(_MANAGE_IMAGES),
 ):
     tenant_id = resolve_tenant_id(user, restaurant_id)
@@ -82,6 +89,9 @@ async def upload_image(
         original_height=validated.height,
         original_size_bytes=validated.size_bytes,
         status="processing",
+        caption=caption,
+        alt_text=alt_text,
+        display_order=display_order,
     )
     repo = ImageRepository(db)
     image = await repo.create(image)
@@ -107,6 +117,37 @@ async def upload_image(
     return _with_urls(image)
 
 
+@router.get("/library", response_model=list[ImageLibraryEntry])
+async def list_image_library(
+    restaurant_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    search: str | None = Query(None, description="Filter by the owning catalog item's name (substring, case-insensitive)"),
+    image_type: str | None = Query(None, description="Filter by exact image_type code"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """Restaurant-wide browse/search across every image, regardless of which catalog item
+    it belongs to -- powers the Media Library page. Deliberately a separate path from the
+    catalog_item_id-required `GET ""` below (that endpoint's contract is unchanged and
+    still used by the per-item image widget). Must stay registered before `/{image_id}`
+    below: FastAPI/Starlette matches routes in declaration order, and "library" would
+    otherwise be captured by `/{image_id}`'s UUID path param (and 422, never falling
+    through to this route).
+    """
+    tenant_id = resolve_tenant_id(user, restaurant_id)
+    rows = await ImageRepository(db).list_for_restaurant(
+        tenant_id, search=search, image_type=image_type, limit=limit, offset=offset
+    )
+    entries: list[ImageLibraryEntry] = []
+    for image, item in rows:
+        entry = ImageLibraryEntry.model_validate(image)
+        _populate_urls(entry, image)
+        entry.catalog_item = CatalogItemRef.model_validate(item) if item is not None else None
+        entries.append(entry)
+    return entries
+
+
 @router.get("/{image_id}", response_model=ImageRead)
 async def get_image(restaurant_id: uuid.UUID, image_id: uuid.UUID, db: DbSession, user: CurrentUser):
     tenant_id = resolve_tenant_id(user, restaurant_id)
@@ -124,6 +165,31 @@ async def list_images(
     tenant_id = resolve_tenant_id(user, restaurant_id)
     images = await ImageRepository(db).list_for_catalog_item(catalog_item_id, tenant_id)
     return [_with_urls(img) for img in images]
+
+
+@router.patch("/{image_id}", response_model=ImageRead)
+async def update_image_metadata(
+    restaurant_id: uuid.UUID,
+    image_id: uuid.UUID,
+    payload: ImageMetadataUpdate,
+    db: DbSession,
+    user: User = Depends(_MANAGE_IMAGES),
+):
+    """Caption/alt text/display order/enable-disable -- metadata only, never touches the
+    stored bytes or triggers reprocessing (see upload/replace/crop for those). This is
+    what the per-item image gallery editor (Flow Builder / Catalog) saves through when an
+    admin edits a caption, drags to reorder, or toggles an image off without deleting it.
+    """
+    tenant_id = resolve_tenant_id(user, restaurant_id)
+    image = await _get_owned_image(db, tenant_id, image_id)
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(image, field, value)
+
+    repo = ImageRepository(db)
+    await repo.commit()
+    return _with_urls(image)
 
 
 @router.post("/{image_id}/crop", response_model=ImageRead)

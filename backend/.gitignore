@@ -5,3 +5,5 @@ __pycache__/
 *.sqlite3
 .env
 alembic/versions/__pycache__/
+media_storage/*
+!media_storage/.gitkeep

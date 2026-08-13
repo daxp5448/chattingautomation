@@ -3,7 +3,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
-import type { Category, Product } from "@/lib/types";
+import { GenericCatalogEditor } from "@/components/GenericCatalogEditor";
+import type { Category, Product, Restaurant } from "@/lib/types";
 
 function MenuForRestaurant({ restaurantId }: { restaurantId: string }) {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -261,6 +262,34 @@ function MenuForRestaurant({ restaurantId }: { restaurantId: string }) {
   );
 }
 
+function MenuRouter({ restaurantId }: { restaurantId: string }) {
+  // niche-provisioned businesses (every one of the 12 niches, including every Demo Bot
+  // restaurant) store their catalog in CatalogCategory/CatalogItem, not the legacy
+  // Category/Product tables this page's own /categories and /products endpoints read --
+  // those return nothing for such a business (confirmed: 0 legacy rows even for a fully
+  // provisioned demo restaurant). uses_generic_engine is the same flag the webhook router
+  // already uses to pick which conversation engine runs, so it's the correct switch here
+  // too.
+  const [usesGenericEngine, setUsesGenericEngine] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    apiFetch<Restaurant>(`/restaurants/${restaurantId}`)
+      .then((r) => setUsesGenericEngine(r.uses_generic_engine))
+      .catch(() => setUsesGenericEngine(false)); // safe fallback -- legacy menu builder always works for a Custom/Legacy business
+  }, [restaurantId]);
+
+  if (usesGenericEngine === null) {
+    return (
+      <div className="flex items-center gap-3 text-sm text-slate-500">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-primary" />
+        Loading...
+      </div>
+    );
+  }
+
+  return usesGenericEngine ? <GenericCatalogEditor restaurantId={restaurantId} /> : <MenuForRestaurant restaurantId={restaurantId} />;
+}
+
 export default function MenuPage() {
-  return <RequireRestaurant>{(restaurantId) => <MenuForRestaurant restaurantId={restaurantId} />}</RequireRestaurant>;
+  return <RequireRestaurant>{(restaurantId) => <MenuRouter restaurantId={restaurantId} />}</RequireRestaurant>;
 }

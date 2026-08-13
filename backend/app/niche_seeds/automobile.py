@@ -74,10 +74,10 @@ TEMPLATE = {
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:book", "title": "\U0001f527 Book Service"},
-        {"id": "welcome:testdrive", "title": "\U0001f697 Test Drive"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
         {"id": "welcome:showroom", "title": "\U0001f4cd Our Showroom"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -113,6 +113,14 @@ TEMPLATE = {
                     "price_type": "fixed",
                     "images": [_IMG_BIKE_SERVICE],
                     "attributes": {"duration_minutes": 45},
+                },
+                {
+                    "name": "Bike Oil Change",
+                    "description": "Engine oil top-up and chain lubrication for two-wheelers.",
+                    "price": 300,
+                    "price_type": "fixed",
+                    "images": [_IMG_BIKE_SERVICE],
+                    "attributes": {"duration_minutes": 20},
                 },
             ],
         },
@@ -167,21 +175,27 @@ TEMPLATE = {
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:book", "title": "\U0001f527 Book Service"},
-                {"id": "welcome:testdrive", "title": "\U0001f697 Test Drive"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
                 {"id": "welcome:showroom", "title": "\U0001f4cd Our Showroom"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:book": "category_select",
-                "welcome:testdrive": "category_select",
                 "welcome:offers": "offers_info",
                 "welcome:showroom": "showroom_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
             "show_image": True,
+        },
+        {
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
         },
         {
             "step_id": "offers_info",

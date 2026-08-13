@@ -30,6 +30,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.engagement import Engagement
 from app.repositories.customer_repository import CustomerRepository
 from app.repositories.restaurant_repository import RestaurantRepository
+from app.services import analytics
 from app.services.payment.razorpay import verify_webhook_signature
 from app.services.whatsapp_client import GraphAPIWhatsAppSender, OutboundMessage
 
@@ -115,6 +116,11 @@ async def generic_razorpay_webhook(request: Request, x_razorpay_signature: str |
                 payment_id = _extract_payment_id(payload)
                 if payment_id:
                     engagement.gateway_metadata = {**(engagement.gateway_metadata or {}), "payment_id": payment_id}
+                analytics.record_event(
+                    session, engagement.restaurant_id, analytics.PAYMENT_COMPLETED,
+                    customer_id=engagement.customer_id,
+                    details={"reference_number": engagement.reference_number, "total": str(engagement.total)},
+                )
                 await session.commit()
 
                 logger.info(

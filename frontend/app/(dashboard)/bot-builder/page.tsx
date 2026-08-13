@@ -54,7 +54,7 @@ const MESSAGE_GROUPS: {
     items: [
       { key: "restaurant_closed", label: "Sent if no branch is currently open" },
       { key: "today_special_empty", label: "Sent when \"Today's Special\" has nothing marked yet" },
-      { key: "contact_us", label: "Sent for \"Contact Restaurant\" (only if the branch has no phone set)", hint: "{{restaurant_name}} {{support_number}}" },
+      { key: "contact_us", label: "Sent for \"Contact Us\" (only if the branch has no phone set)", hint: "{{restaurant_name}} {{support_number}}" },
       { key: "handover", label: "Sent when the chat is handed over to a staff member" },
     ],
   },

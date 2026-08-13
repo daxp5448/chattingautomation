@@ -206,7 +206,7 @@ async def test_full_order_flow_with_cart_and_back_navigation(db_session, retail_
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "Hi", profile_name=CUSTOMER_PROFILE_NAME)
     welcome_options = _extract_options(_last_interactive(sender))
     assert [o["id"] for o in welcome_options] == [
-        "welcome:shop", "welcome:new", "welcome:offers", "welcome:store", "welcome:contact",
+        "welcome:shop", "welcome:cart", "welcome:offers", "welcome:store", "welcome:contact", "welcome:human",
     ]
     customer = await _get_customer(db_session, restaurant.id)
     assert customer.name == CUSTOMER_PROFILE_NAME  # auto-pulled from the WhatsApp profile
@@ -444,7 +444,7 @@ async def test_back_navigation_from_info_message_steps_to_welcome(db_session, re
     for welcome_option, info_step, expected_snippet in [
         ("welcome:offers", "offers_info", "discounts"),
         ("welcome:store", "store_info", "directions"),
-        ("welcome:contact", "contact_info", "whatsapp"),
+        ("welcome:contact", "contact_info", "phone"),
     ]:
         await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, welcome_option)
         state = await _get_state(db_session, customer.id)
@@ -502,3 +502,23 @@ async def test_back_navigation_from_cart_menu_to_category_select(db_session, ret
     assert state.current_step == "cart_menu"
     assert len(state.context["cart"]) == 2
     assert state.context["cart_total"] == "1698"  # 899 (shirt) + 799 (kurti)
+
+
+async def test_talk_to_human_hands_off_and_pauses_automation(db_session, retail_tenant, sender):
+    """The welcome menu's new "Talk to a Human" entry (human_handoff step type) must set
+    is_handed_over and stop the automated flow from advancing on further messages."""
+    restaurant = retail_tenant
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:human")
+
+    customer = await _get_customer(db_session, restaurant.id)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"
+    assert state.is_handed_over is True
+    handoff_message = _last_message_to(sender, CUSTOMER_PHONE)
+    assert "connecting" in _body_text(handoff_message).lower()
+
+    # Automation stays paused -- a further message doesn't advance the flow.
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hello?")
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"

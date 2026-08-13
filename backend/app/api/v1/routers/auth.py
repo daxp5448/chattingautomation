@@ -83,7 +83,7 @@ async def register(request: Request, payload: UserCreate, db: DbSession, current
                 )
             if payload.restaurant_id != current_user.restaurant_id:
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, detail="Cannot create users for another restaurant"
+                    status_code=status.HTTP_403_FORBIDDEN, detail="Cannot create users for another business"
                 )
         else:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions to create users")

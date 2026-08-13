@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "KelvionTech Admin",
-  description: "Multi-tenant WhatsApp restaurant ordering platform admin dashboard",
+  description: "Multi-tenant WhatsApp Business OS admin dashboard",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

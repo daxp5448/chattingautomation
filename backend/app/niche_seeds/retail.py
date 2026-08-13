@@ -1,9 +1,9 @@
 """Retail / Fashion / Boutique niche template -- a second `action_type="order"` niche
 (cart + quantity + checkout + payment) for the generic conversation engine (see
 app/services/generic_flow_engine.py, whose module docstring and step-shape contract this
-file's `default_flow_steps` implements exactly). This is a straight re-skin of the proven
-Restaurant order-flow template (app/niche_seeds/restaurant.py) onto apparel/footwear/
-accessories catalog and copy -- no new engine capability is required.
+file's `default_flow_steps` implements exactly). Shares the Restaurant order-flow shape
+(app/niche_seeds/restaurant.py) -- no new engine capability is required -- but with its
+own terminology, welcome menu, and apparel-specific catalog copy.
 
 `TEMPLATE` matches app/models/niche_template.py's column shapes 1:1 -- see
 app/services/niche_provisioning.py for how it's copied into a brand-new business's own
@@ -18,25 +18,18 @@ Order-flow shape (context keys a completed order's Engagement.details carries):
   after every cart mutation -- see generic_flow_engine.py::_Engine._refresh_cart_summary).
 `create_engagement` reads its EngagementType off the FlowDefinition itself (not off any
 step) and sets requires_payment=True automatically whenever the cart is non-empty.
+
+Size/colour are carried in each item's `attributes` JSON bag for admin/API use, but
+surfaced to the customer via each item's plain `description` field -- the shared
+engine's `_price_label` `include_attributes` special-case only understands
+`duration_minutes` (a salon-specific concept), so this is the zero-engine-change way to
+make sizes/colours visible in the item list (see generic_flow_engine.py, which this file
+must not edit).
 """
 
 from app.niche_seeds._media import demo_image_base
 
 
-_PLACEHOLDER = "https://placehold.co/{size}?text={text}"
-
-
-def _img(size: str, text: str) -> str:
-    return _PLACEHOLDER.format(size=size, text=text.replace(" ", "+").replace("&", "%26"))
-
-
-# Real demo photos (Wikimedia Commons, free-licensed), uploaded to this deployment's own
-# S3/MinIO bucket for a permanent (non-expiring) URL -- see
-# backend/scripts/demo_asset_upload.py. The base URL comes from
-# settings.PUBLIC_MEDIA_BASE_URL (see app/niche_seeds/_media.py) -- defaults to raw
-# MinIO (only reachable from this machine); point it at a publicly-tunnelled URL or a
-# real bucket before testing on a real WhatsApp number (same requirement GOING_LIVE.md
-# documents for the webhook itself), then re-run sync_niche_templates once.
 _DEMO_IMG_BASE = demo_image_base("retail")
 _IMG_WELCOME = f"{_DEMO_IMG_BASE}/welcome.jpg"
 _IMG_MENS = f"{_DEMO_IMG_BASE}/mens.jpg"
@@ -44,20 +37,23 @@ _IMG_WOMENS = f"{_DEMO_IMG_BASE}/womens.jpg"
 _IMG_FOOTWEAR = f"{_DEMO_IMG_BASE}/footwear.jpg"
 _IMG_ACCESSORIES = f"{_DEMO_IMG_BASE}/accessories.jpg"
 
+_WELCOME_TEXT = "\U0001f455 Welcome to {{business_name}}! Shop the latest styles in seconds."
+
 
 TEMPLATE = {
     "code": "retail",
     "name": "Retail & Fashion",
     "action_type": "order",
     "icon": "\U0001f455",  # 👕
-    "welcome_message": "\U0001f455 Welcome to [Business Name]! Shop the latest styles in seconds.",
+    "welcome_message": _WELCOME_TEXT,
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:shop", "title": "\U0001f6cd️ Shop Now"},
-        {"id": "welcome:new", "title": "✨ New Arrivals"},
+        {"id": "welcome:cart", "title": "\U0001f6cd️ View Cart"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
         {"id": "welcome:store", "title": "\U0001f3ea Our Store"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -66,7 +62,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Casual Shirt",
-                    "description": "Breathable cotton shirt for everyday wear.",
+                    "description": "Breathable cotton shirt for everyday wear. Sizes: S, M, L, XL.",
                     "price": 899,
                     "price_type": "fixed",
                     "images": [_IMG_MENS],
@@ -74,7 +70,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Formal Trousers",
-                    "description": "Tailored fit trousers, perfect for office wear.",
+                    "description": "Tailored fit trousers, perfect for office wear. Sizes: 30, 32, 34, 36.",
                     "price": 1299,
                     "price_type": "fixed",
                     "images": [_IMG_MENS],
@@ -88,7 +84,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Printed Kurti",
-                    "description": "Lightweight rayon kurti with block print detailing.",
+                    "description": "Lightweight rayon kurti with block print detailing. Sizes: S, M, L, XL.",
                     "price": 799,
                     "price_type": "fixed",
                     "images": [_IMG_WOMENS],
@@ -96,7 +92,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Party Dress",
-                    "description": "Flowy evening dress with a flattering silhouette.",
+                    "description": "Flowy evening dress with a flattering silhouette. Sizes: S, M, L.",
                     "price": 1899,
                     "price_type": "fixed",
                     "images": [_IMG_WOMENS],
@@ -110,7 +106,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Sneakers",
-                    "description": "Cushioned everyday sneakers with a grippy sole.",
+                    "description": "Cushioned everyday sneakers with a grippy sole. Sizes: 7, 8, 9, 10.",
                     "price": 1999,
                     "price_type": "fixed",
                     "images": [_IMG_FOOTWEAR],
@@ -118,7 +114,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Sandals",
-                    "description": "Comfortable everyday sandals, easy slip-on fit.",
+                    "description": "Comfortable everyday sandals, easy slip-on fit. Sizes: 7, 8, 9, 10.",
                     "price": 699,
                     "price_type": "fixed",
                     "images": [_IMG_FOOTWEAR],
@@ -154,21 +150,23 @@ TEMPLATE = {
         {
             "step_id": "welcome",
             "type": "menu_select",
-            "prompt": "\U0001f455 Welcome to {{restaurant_name}}! Shop the latest styles in seconds.",
+            "prompt": _WELCOME_TEXT,
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:shop", "title": "\U0001f6cd️ Shop Now"},
-                {"id": "welcome:new", "title": "✨ New Arrivals"},
+                {"id": "welcome:cart", "title": "\U0001f6cd️ View Cart"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
                 {"id": "welcome:store", "title": "\U0001f3ea Our Store"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:shop": "category_select",
-                "welcome:new": "category_select",
+                "welcome:cart": "cart_menu",
                 "welcome:offers": "offers_info",
                 "welcome:store": "store_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
@@ -183,17 +181,30 @@ TEMPLATE = {
         {
             "step_id": "store_info",
             "type": "message",
-            "prompt": "\U0001f3ea You'll find {{restaurant_name}} details and directions here -- message us if you need help finding us!",
+            "prompt": (
+                "\U0001f3ea {{business_name}}\n\n[Address will appear here once the business "
+                "adds it in Settings.]\n\nTap \U0001f9d1 Talk to a Human if you'd like directions right now."
+            ),
             "back_target": "welcome",
         },
         {
             "step_id": "contact_info",
             "type": "message",
-            "prompt": "\U0001f4de You can reach {{restaurant_name}} right here on WhatsApp any time.",
+            "prompt": (
+                "\U0001f4de {{business_name}}\n\nPhone: [add your number in Settings]\n"
+                "Hours: [add your hours in Settings]\n\n"
+                "Or tap \U0001f9d1 Talk to a Human from the main menu to chat with our team right now."
+            ),
             "back_target": "welcome",
         },
         {
-            # Step 2: "Shop Now"/"New Arrivals" tapped -> Category list. [Back -> Welcome]
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
+        },
+        {
+            # "Shop Now" tapped -> Category list. [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
             "prompt": "What would you like to shop for?",
@@ -205,7 +216,7 @@ TEMPLATE = {
             "section_title": "Categories",
         },
         {
-            # Step 3: Category tapped -> Item list (name + price, tap = select).
+            # Category tapped -> Item list (name + price, tap = select).
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
@@ -219,7 +230,7 @@ TEMPLATE = {
             "section_title": "Items",
         },
         {
-            # Step 4: Item tapped -> Quantity buttons (1/2/3/Custom), adds to cart.
+            # Item tapped -> Quantity buttons (1/2/3/Custom), adds to cart.
             # [Back -> Item list]
             "step_id": "quantity_select",
             "type": "quantity_input",
@@ -230,7 +241,8 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 5: Cart menu -- Add More Items / Checkout. [Back -> Category list]
+            # Cart menu -- Add More Items / Checkout. Reachable both from the order chain
+            # and directly from welcome's "View Cart" button. [Back -> Category list]
             "step_id": "cart_menu",
             "type": "menu_select",
             "prompt": "\U0001f6cd️ Your bag so far:\n\n{{cart_summary}}\n\nTotal: {{currency}} {{cart_total}}\n\nWhat next?",
@@ -248,7 +260,7 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 6: Delivery address -- free text or native WhatsApp location share,
+            # Delivery address -- free text or native WhatsApp location share,
             # skippable for store pickup. [Back -> Cart menu]
             "step_id": "address_capture",
             "type": "free_text_input",
@@ -260,7 +272,7 @@ TEMPLATE = {
             "next": "order_confirm",
         },
         {
-            # Step 7: Order confirmation card (items, total, address) -> "Place Order".
+            # Order confirmation card (items, total, address) -> "Place Order".
             # [Back -> delivery address]
             "step_id": "order_confirm",
             "type": "confirm_action",
@@ -279,11 +291,11 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 8: Confirmed -> confirmation + payment link (create_engagement
-            # generates a real Razorpay payment link whenever the cart total is
-            # non-zero -- see app/services/payment/generic_razorpay.py);
-            # notify_business() (called unconditionally inside create_engagement)
-            # notifies staff. Flow complete -- terminal, no Back.
+            # Confirmed -> confirmation + payment link (create_engagement generates a
+            # real Razorpay payment link whenever the cart total is non-zero -- see
+            # app/services/payment/generic_razorpay.py); notify_business() (called
+            # unconditionally inside create_engagement) notifies staff. Flow complete --
+            # terminal, no Back.
             "step_id": "order_confirmed",
             "type": "message",
             "prompt": (
@@ -291,7 +303,7 @@ TEMPLATE = {
                 "Total: {{currency}} {{last_total}}\n"
                 "{{payment_link_url}}\n\n"
                 "We'll start packing your order right away. Thank you for shopping with "
-                "{{restaurant_name}}!"
+                "{{business_name}}!"
             ),
             "back_target": None,
             "terminal": True,
@@ -306,9 +318,8 @@ TEMPLATE = {
             "cancelled": "Cancelled",
         },
         "catalog_label": "Collection",
-        "category_label": "Category",
+        "category_label": "Clothing Category",
         "item_label": "Item",
-        "staff_label": "Staff",
     },
     "default_modules": {},
 }

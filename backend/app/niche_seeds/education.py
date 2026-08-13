@@ -64,10 +64,10 @@ TEMPLATE = {
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:browse", "title": "\U0001f4da Explore Courses"},
-        {"id": "welcome:enroll", "title": "\U0001f4dd Enroll Now"},
         {"id": "welcome:offers", "title": "\U0001f389 Offers"},
         {"id": "welcome:center", "title": "\U0001f4cd Our Center"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -148,6 +148,14 @@ TEMPLATE = {
                     "images": [_IMG_ONLINE],
                     "attributes": {"duration": "6 months"},
                 },
+                {
+                    "name": "Online Spoken English",
+                    "description": "Duration: 3 months · Live online conversational English classes with certified trainers.",
+                    "price": 3500,
+                    "price_type": "starting_from",
+                    "images": [_IMG_ONLINE],
+                    "attributes": {"duration": "3 months"},
+                },
             ],
         },
     ],
@@ -164,21 +172,27 @@ TEMPLATE = {
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:browse", "title": "\U0001f4da Explore Courses"},
-                {"id": "welcome:enroll", "title": "\U0001f4dd Enroll Now"},
                 {"id": "welcome:offers", "title": "\U0001f389 Offers"},
                 {"id": "welcome:center", "title": "\U0001f4cd Our Center"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:browse": "category_select",
-                "welcome:enroll": "category_select",
                 "welcome:offers": "offers_info",
                 "welcome:center": "location_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
             "show_image": True,
+        },
+        {
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
         },
         {
             "step_id": "offers_info",

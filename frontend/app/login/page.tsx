@@ -33,7 +33,7 @@ export default function LoginPage() {
         <div className="flex flex-col items-center text-center">
           <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-lg font-bold text-white">K</div>
           <h1 className="text-xl font-semibold text-slate-900">KelvionTech Admin</h1>
-          <p className="text-sm text-slate-500">Sign in to manage your restaurant</p>
+          <p className="text-sm text-slate-500">Sign in to manage your business</p>
         </div>
 
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}

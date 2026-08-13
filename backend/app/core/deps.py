@@ -140,7 +140,7 @@ def require_feature(code: str):
         tenant_id = resolve_tenant_id(user, restaurant_id)
         restaurant = await db.get(Restaurant, tenant_id)
         if restaurant is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
         if restaurant.enabled_features is not None and code not in restaurant.enabled_features:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

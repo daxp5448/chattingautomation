@@ -69,10 +69,10 @@ TEMPLATE = {
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:book", "title": "\U0001f6cf Book a Room"},
-        {"id": "welcome:rooms", "title": "\U0001f4d6 View Rooms"},
         {"id": "welcome:offers", "title": "\U0001f389 Offers"},
         {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Hotel"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -153,6 +153,14 @@ TEMPLATE = {
                     "images": [_IMG_FAMILY],
                     "attributes": {"max_occupancy": 4, "bed_type": "Two Queen"},
                 },
+                {
+                    "name": "Family Suite",
+                    "description": "Two connecting rooms with four queen beds, ideal for larger families, sleeps up to 6 guests. Free WiFi & breakfast included.",
+                    "price": 9000,
+                    "price_type": "fixed",
+                    "images": [_IMG_FAMILY],
+                    "attributes": {"max_occupancy": 6, "bed_type": "Four Queen"},
+                },
             ],
         },
     ],
@@ -169,21 +177,27 @@ TEMPLATE = {
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:book", "title": "\U0001f6cf Book a Room"},
-                {"id": "welcome:rooms", "title": "\U0001f4d6 View Rooms"},
                 {"id": "welcome:offers", "title": "\U0001f389 Offers"},
                 {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Hotel"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:book": "category_select",
-                "welcome:rooms": "category_select",
                 "welcome:offers": "offers_info",
                 "welcome:location": "location_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
             "show_image": True,
+        },
+        {
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
         },
         {
             "step_id": "offers_info",

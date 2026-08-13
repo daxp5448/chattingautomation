@@ -86,7 +86,7 @@ async def create_campaign(
     tenant_id = resolve_tenant_id(user, restaurant_id)
     template = await WhatsAppTemplateRepository(db).get(payload.template_id, tenant_id)
     if not template:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown template_id for this restaurant")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown template_id for this business")
 
     repo = BroadcastCampaignRepository(db)
     campaign = BroadcastCampaign(restaurant_id=tenant_id, status=BroadcastStatus.DRAFT, **payload.model_dump())
@@ -116,7 +116,7 @@ async def update_campaign(
     if "template_id" in updates:
         template = await WhatsAppTemplateRepository(db).get(updates["template_id"], tenant_id)
         if not template:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown template_id for this restaurant")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown template_id for this business")
     for field, value in updates.items():
         setattr(campaign, field, value)
     await repo.commit()
@@ -151,7 +151,7 @@ async def start_campaign(
 
     restaurant = await RestaurantRepository(db).get(tenant_id)
     if not restaurant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
 
     matching = await CustomerRepository(db).list_by_tags(tenant_id, campaign.segment_tags)
     if template.category == TemplateCategory.MARKETING:
@@ -161,8 +161,8 @@ async def start_campaign(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"{len(matching)} matching customers exceeds this restaurant's broadcast_daily_cap "
-                f"({restaurant.broadcast_daily_cap}) -- narrow the segment, or raise the cap in restaurant "
+                f"{len(matching)} matching customers exceeds this business's broadcast_daily_cap "
+                f"({restaurant.broadcast_daily_cap}) -- narrow the segment, or raise the cap in business "
                 "settings once your real Meta messaging tier is confirmed"
             ),
         )

@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
+    # "local" writes/reads uploaded images straight to disk (LOCAL_MEDIA_DIR below) -- no
+    # MinIO/S3 needed for local dev. Switch to "s3" once a real bucket/MinIO is actually
+    # reachable; every S3_* setting below is then used exactly as before. See
+    # app/services/image_storage_service.py, which is the only thing that branches on this.
+    STORAGE_BACKEND: str = "local"
+    # Folder uploaded image bytes are written to when STORAGE_BACKEND="local" -- relative
+    # paths resolve against the backend process's working directory (normally
+    # `backend/`), matching how DATABASE_URL-less sqlite paths already behave elsewhere in
+    # this file. Created automatically on first write; safe to point at a bind-mounted
+    # volume in a real deployment.
+    LOCAL_MEDIA_DIR: str = "media_storage"
+
     S3_ENDPOINT_URL: str = "http://localhost:9000"
     S3_ACCESS_KEY: str = "minioadmin"
     S3_SECRET_KEY: str = "minioadmin"
@@ -51,6 +63,14 @@ class Settings(BaseSettings):
     # testing, where "reachable from the internet" doesn't matter yet. See
     # app/niche_seeds/_media.py for where this is consumed.
     PUBLIC_MEDIA_BASE_URL: str = "http://localhost:9000/kelviontech-media"
+
+    # The public, internet-reachable base URL for this backend's own API -- same tunnel
+    # PUBLIC_MEDIA_BASE_URL rides (that setting is literally "<this>/media"), but needed as
+    # its own value now that a second consumer exists: WhatsApp Flow endpoint_uri (see
+    # app/api/v1/routers/whatsapp_flow.py), which Meta calls directly and so must be a real
+    # public URL, not the local dev address FastAPI itself binds to. Update alongside
+    # PUBLIC_MEDIA_BASE_URL whenever the tunnel URL changes.
+    PUBLIC_API_BASE_URL: str = "http://localhost:8000/api/v1"
 
     WHATSAPP_GRAPH_API_VERSION: str = "v20.0"
     WHATSAPP_APP_SECRET: str = ""

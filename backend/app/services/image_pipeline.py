@@ -141,12 +141,24 @@ async def enqueue_processing(image_id: uuid.UUID) -> None:
     second one via asyncio.run() (the exact trap app/tasks/reconciliation.py's docstring
     warns about). See app/tasks/image_tasks.py for the real Celery task this dispatches
     to in production.
+
+    Local dev without a Redis broker running falls back to the same synchronous path the
+    tests use, rather than leaving the Image row stuck at status="processing" forever --
+    `.delay()`'s connection attempt fails fast (kombu raises immediately on a refused
+    connection, no retry loop) so this adds no real latency once a broker is genuinely
+    configured and reachable.
     """
+    from kombu.exceptions import OperationalError
+
     from app.tasks.image_tasks import generate_image_variants  # local import: avoids a
     # celery_app import at module load time for callers (e.g. plain service-layer tests)
     # that never need Celery at all.
 
-    generate_image_variants.delay(str(image_id))
+    try:
+        generate_image_variants.delay(str(image_id))
+    except OperationalError:
+        logger.warning("Celery broker unreachable -- processing image %s synchronously instead", image_id)
+        await process_image(image_id)
 
 
 async def process_image(image_id: uuid.UUID) -> None:

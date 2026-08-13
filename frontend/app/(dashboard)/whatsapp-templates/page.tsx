@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
+import { WhatsAppFlowToggle } from "@/components/WhatsAppFlowToggle";
 import { useCurrentRestaurant } from "@/lib/restaurant";
 import type { WhatsAppTemplate } from "@/lib/types";
 
@@ -235,6 +236,7 @@ function WhatsAppTemplatesForRestaurant({ restaurantId }: { restaurantId: string
         </p>
       </div>
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      <WhatsAppFlowToggle restaurantId={restaurantId} />
       {!canManage && (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           The WhatsApp Template Manager isn&apos;t included in this business&apos;s plan -- contact support to

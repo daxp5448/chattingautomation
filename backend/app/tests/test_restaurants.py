@@ -44,6 +44,29 @@ async def test_create_restaurant_auto_creates_owner_login(client):
     assert login.status_code == 200, login.text
 
 
+async def test_list_restaurants_includes_demo_restaurants_flagged(client):
+    """GET /restaurants used to hard-exclude is_demo restaurants (so Demo Bot testing was
+    invisible to Super Admin -- no way to open a demo restaurant's own dashboard/orders/
+    live-chat). Now included, distinguished via is_demo on each row instead of hidden."""
+    headers = await _register_super_admin(client)
+
+    real = await client.post(
+        "/api/v1/restaurants", json={"name": "Real Diner", "slug": "real-diner"}, headers=headers
+    )
+    assert real.status_code == 201, real.text
+
+    demo = await client.post(
+        "/api/v1/restaurants", json={"name": "Demo Diner", "slug": "demo-diner", "is_demo": True}, headers=headers
+    )
+    assert demo.status_code == 201, demo.text
+
+    listed = await client.get("/api/v1/restaurants", headers=headers)
+    assert listed.status_code == 200, listed.text
+    by_slug = {r["slug"]: r for r in listed.json()}
+    assert by_slug["real-diner"]["is_demo"] is False
+    assert by_slug["demo-diner"]["is_demo"] is True
+
+
 async def test_unauthenticated_register_blocked_once_an_account_exists(client):
     await _register_super_admin(client)
 

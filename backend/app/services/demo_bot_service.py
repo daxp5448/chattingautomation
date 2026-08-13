@@ -90,7 +90,7 @@ async def _send_welcome_banner(session, sender: WhatsAppSender, sentinel_restaur
             session, sender, sentinel_restaurant, customer_id, from_phone,
             OutboundMessage.image(
                 from_phone, sentinel_restaurant.cover_image_url,
-                "One WhatsApp Business OS, any industry -- pick one below to try a live demo of its bot 👇",
+                "One WhatsApp Business OS, any industry -- pick one below for a live walkthrough of its bot 👇",
             ),
         )
 
@@ -98,16 +98,24 @@ async def _send_welcome_banner(session, sender: WhatsAppSender, sentinel_restaur
 async def _send_industry_picker(session, sender: WhatsAppSender, sentinel_restaurant: Restaurant, customer_id, from_phone: str) -> None:
     await _send_welcome_banner(session, sender, sentinel_restaurant, customer_id, from_phone)
     templates = await NicheTemplateRepository(session).list_all()
+    # demo_enabled_niche_codes narrows the picker to a Super Admin's own selection (see
+    # app/models/restaurant.py -- used both by demo-mode-toggled real businesses like
+    # Prince Corner and, in principle, the sentinel Demo Bot restaurant itself). None
+    # means "no restriction configured" -- every niche with a synced template still shows,
+    # the same behavior this had before the field existed.
+    enabled_codes = sentinel_restaurant.demo_enabled_niche_codes
+    if enabled_codes is not None:
+        templates = [t for t in templates if t.code in set(enabled_codes)]
     if not templates:
         await send_generic_message(
             session, sender, sentinel_restaurant, customer_id, from_phone,
-            OutboundMessage.text(from_phone, "No demo industries are configured yet -- please check back soon."),
+            OutboundMessage.text(from_phone, "No industries are configured yet -- please check back soon."),
         )
         return
     rows = [{"id": f"{_PICK_PREFIX}{t.code}", "title": f"{t.icon + ' ' if t.icon else ''}{t.name}"[:24]} for t in templates]
     pages = [rows[i:i + _MAX_LIST_ROWS] for i in range(0, len(rows), _MAX_LIST_ROWS)]
     for page_num, page_rows in enumerate(pages, start=1):
-        body = "👋 Welcome to the KelvionTech Business OS demo! Pick an industry to try a live demo of its WhatsApp bot:"
+        body = "👋 Welcome to the KelvionTech Business OS! Pick an industry for a live walkthrough of its WhatsApp bot:"
         if len(pages) > 1:
             body += f" (page {page_num}/{len(pages)})"
         await send_generic_message(
@@ -160,14 +168,38 @@ async def handle_demo_inbound(
                 await session.commit()
                 return
 
+            # The clean template name ("Retail & Fashion"), not demo_restaurant.name (which
+            # is literally "Demo — Retail & Fashion" -- see demo_restaurant_sync.py) --
+            # that internal naming is fine for the Super Admin's own restaurant list, but
+            # would leak the word "Demo" straight into this customer-facing message
+            # regardless of how the picker itself is worded.
+            niche_template = await NicheTemplateRepository(session).get_by_code(niche_code)
+            display_name = niche_template.name if niche_template else demo_restaurant.name
+
             demo_session.active_restaurant_id = demo_restaurant.id
+            if demo_restaurant.demo_sends_via_restaurant_id != sentinel_restaurant.id:
+                # Self-heals demo_sends_via_restaurant_id (see
+                # app/services/demo_restaurant_sync.py) to whichever real number this
+                # customer actually entered through -- necessary now that a demo restaurant
+                # can be reached via more than one sentinel over its lifetime (the original
+                # sentinel Demo Bot restaurant, or any real business toggled into Demo Mode
+                # via demo_mode_enabled). Without this, send_generic_message would keep
+                # resolving credentials off whichever sentinel provisioned this niche
+                # first, and outbound messages would silently fail to send through a
+                # different, currently-active number. Known narrow tradeoff: if two
+                # different real numbers are BOTH actively demoing the same niche to two
+                # different prospects at the same moment, whichever one sends last "wins"
+                # credential routing for that niche until the other's next turn re-flips
+                # it back -- not reachable today (only one number is ever in Demo Mode at
+                # a time in practice), flagged here rather than silently accepted.
+                demo_restaurant.demo_sends_via_restaurant_id = sentinel_restaurant.id
             await session.flush()
             await send_generic_message(
                 session, sender, sentinel_restaurant, sentinel_customer.id, from_phone,
                 OutboundMessage.text(
                     from_phone,
-                    f"🎬 Starting the *{demo_restaurant.name}* demo — everything below is simulated, no real "
-                    "order or payment is ever created. Type *menu* anytime to try another industry.",
+                    f"🌐 Starting the *{display_name}* walkthrough — no real order or payment is ever created "
+                    "here. Type *menu* anytime to try another industry.",
                 ),
             )
             await session.commit()

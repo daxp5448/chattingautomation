@@ -6,6 +6,7 @@ from app.api.v1.routers import (
     bot_config,
     branches,
     broadcasts,
+    catalog,
     conversations,
     coupons,
     customers,
@@ -14,17 +15,20 @@ from app.api.v1.routers import (
     faq,
     feature_packages,
     flow_definitions,
+    flow_preview,
     generic_conversations,
     generic_payments,
     image_type_profiles,
     images,
     media,
     menu,
+    messages,
     niche_templates,
     orders,
     payments,
     restaurants,
     webhook,
+    whatsapp_flow,
     whatsapp_templates,
     ws,
 )
@@ -34,6 +38,7 @@ api_router.include_router(auth.router)
 api_router.include_router(restaurants.router)
 api_router.include_router(branches.router)
 api_router.include_router(menu.router)
+api_router.include_router(catalog.router)
 api_router.include_router(customers.router)
 api_router.include_router(orders.router)
 api_router.include_router(bot_config.router)
@@ -51,9 +56,12 @@ api_router.include_router(niche_templates.router)
 api_router.include_router(images.router)
 api_router.include_router(image_type_profiles.router)
 api_router.include_router(flow_definitions.router)
+api_router.include_router(flow_preview.router)
 api_router.include_router(whatsapp_templates.router)
+api_router.include_router(whatsapp_flow.router)
 api_router.include_router(broadcasts.router)
 api_router.include_router(api_endpoints.router)
 api_router.include_router(generic_conversations.router)
 api_router.include_router(feature_packages.router)
 api_router.include_router(media.router)
+api_router.include_router(messages.router)

@@ -188,7 +188,7 @@ async def test_side_branch_messages_return_to_welcome(db_session, education_tena
 
     cases = [
         ("welcome:offers", "offers_info", "offers"),
-        ("welcome:center", "location_info", "center"),
+        ("welcome:center", "location_info", "directions"),
         ("welcome:contact", "contact_info", "admissions team"),
     ]
     for button_id, step_id, expected_snippet in cases:
@@ -230,7 +230,7 @@ async def test_full_inquiry_flow_with_back_navigation(db_session, education_tena
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "Hi", profile_name=CUSTOMER_PROFILE_NAME)
     welcome_options = _extract_options(_last_interactive(sender))
     assert [o["id"] for o in welcome_options] == [
-        "welcome:browse", "welcome:enroll", "welcome:offers", "welcome:center", "welcome:contact",
+        "welcome:browse", "welcome:offers", "welcome:center", "welcome:contact", "welcome:human",
     ]
     customer = await _get_customer(db_session, restaurant.id)
     assert customer.name == CUSTOMER_PROFILE_NAME  # auto-pulled from the WhatsApp profile
@@ -408,7 +408,7 @@ async def test_name_edit_branch_captures_override_and_continues(db_session, educ
     math_item = await _get_item(db_session, restaurant.id, "Class 10 Math Batch")
 
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hello", profile_name=CUSTOMER_PROFILE_NAME)
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:enroll")  # Enroll Now routes into browse chain
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:browse")
     state = await _get_state(db_session, (await _get_customer(db_session, restaurant.id)).id)
     assert state.current_step == "category_select"
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"category:{academic_category_id}")
@@ -446,3 +446,23 @@ async def test_name_edit_branch_captures_override_and_continues(db_session, educ
     assert engagement.details["customer_name_override"] == "Rohan M."
     assert engagement.details["preferred_batch"] is None
     assert engagement.details["requirements"] is None
+
+
+async def test_talk_to_human_hands_off_and_pauses_automation(db_session, education_tenant, sender):
+    """The welcome menu's new "Talk to a Human" entry (human_handoff step type) must set
+    is_handed_over and stop the automated flow from advancing on further messages."""
+    restaurant = education_tenant
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:human")
+
+    customer = await _get_customer(db_session, restaurant.id)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"
+    assert state.is_handed_over is True
+    handoff_message = _last_message_to(sender, CUSTOMER_PHONE)
+    assert "connecting" in _body_text(handoff_message).lower()
+
+    # Automation stays paused -- a further message doesn't advance the flow.
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hello?")
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"

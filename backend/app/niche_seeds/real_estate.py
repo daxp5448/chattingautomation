@@ -67,6 +67,7 @@ TEMPLATE = {
         {"id": "welcome:offers", "title": "\U0001f389 Offers"},
         {"id": "welcome:office", "title": "\U0001f4cd Our Office"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -103,6 +104,14 @@ TEMPLATE = {
                     "images": [_IMG_VILLAS],
                     "attributes": {"bedrooms": 4, "area_sqft": 3200, "possession": "Ready to move"},
                 },
+                {
+                    "name": "3 BHK Independent Villa",
+                    "description": "3 bedrooms · 2400 sqft · Under construction, possession Mar 2027 · Independent villa with private terrace in Sarjapur Road.",
+                    "price": 28000000,
+                    "price_type": "starting_from",
+                    "images": [_IMG_VILLAS],
+                    "attributes": {"bedrooms": 3, "area_sqft": 2400, "possession": "Mar 2027"},
+                },
             ],
         },
         {
@@ -116,6 +125,14 @@ TEMPLATE = {
                     "price_type": "on_request",
                     "images": [_IMG_PLOTS],
                     "attributes": {"area_sqft": 1200, "possession": "Immediate"},
+                },
+                {
+                    "name": "Corner Plot",
+                    "description": "1600 sqft · East-facing corner plot · Approved layout, close to the main road.",
+                    "price": 4200000,
+                    "price_type": "starting_from",
+                    "images": [_IMG_PLOTS],
+                    "attributes": {"area_sqft": 1600, "possession": "Immediate"},
                 },
             ],
         },
@@ -159,26 +176,65 @@ TEMPLATE = {
                 {"id": "welcome:offers", "title": "\U0001f389 Offers"},
                 {"id": "welcome:office", "title": "\U0001f4cd Our Office"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:browse": "category_select",
-                "welcome:list_property": "list_property_info",
+                "welcome:list_property": "list_property_capture",
                 "welcome:offers": "offers_info",
                 "welcome:office": "location_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
             "show_image": True,
         },
         {
-            "step_id": "list_property_info",
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
+        },
+        {
+            # Real lead capture (not a dead-end message): free-text property details ->
+            # review -> a genuine tracked Engagement lead, reusing the same
+            # create_engagement action verb the browse-a-listing enquiry chain uses below.
+            "step_id": "list_property_capture",
+            "type": "free_text_input",
+            "prompt": (
+                "\U0001f4cb Want to list your property with {{business_name}}? Tell us a bit about it "
+                "(location, type, asking price) -- or tap Skip and our team will call you instead."
+            ),
+            "capture_key": "property_listing_details",
+            "allow_skip": True,
+            "back_target": "welcome",
+            "next": "list_property_confirm",
+        },
+        {
+            "step_id": "list_property_confirm",
+            "type": "confirm_action",
+            "prompt": (
+                "Please review your listing request:\n\n"
+                "\U0001f4cb {{property_listing_details}}\n\n"
+                "Tap below and our team will get in touch to list it for you."
+            ),
+            "buttons_from": "static",
+            "static_options": [{"id": "listing:submit", "title": "Submit"}],
+            "action": "create_engagement",
+            "back_target": "list_property_capture",
+            "next": "list_property_confirmed",
+            "show_image": False,
+        },
+        {
+            "step_id": "list_property_confirmed",
             "type": "message",
             "prompt": (
-                "\U0001f4cb Want to list your property with {{restaurant_name}}? Reply here with your "
-                "property details and our team will get in touch to list it for you."
+                "✅ Thanks! Your listing request has been submitted. Reference: {{last_reference_number}}.\n\n"
+                "Our team will reach out shortly to help list your property."
             ),
-            "back_target": "welcome",
+            "back_target": None,
+            "terminal": True,
         },
         {
             "step_id": "offers_info",

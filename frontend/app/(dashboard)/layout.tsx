@@ -7,19 +7,22 @@ import { RestaurantProvider } from "@/lib/restaurant";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: "📊" },
-  { href: "/restaurants", label: "Restaurants", icon: "🏬" },
+  { href: "/restaurants", label: "Businesses", icon: "🏬" },
   { href: "/niches", label: "Niches", icon: "🧩" },
   { href: "/feature-packages", label: "Feature Packages", icon: "🎁" },
   { href: "/branches", label: "Branches", icon: "📍" },
   { href: "/menu", label: "Menu", icon: "🍽️" },
+  { href: "/messages", label: "Messages", icon: "📝" },
   { href: "/bot-builder", label: "Bot Builder", icon: "🤖" },
   { href: "/home-builder", label: "Home Builder", icon: "🏠" },
   { href: "/flow-builder", label: "Flow Builder", icon: "🧭" },
+  { href: "/bot-preview", label: "Bot Preview", icon: "👁️" },
   { href: "/api-endpoints", label: "API Endpoints", icon: "🔌" },
   { href: "/whatsapp-templates", label: "WhatsApp Templates", icon: "📨" },
   { href: "/broadcasts", label: "Broadcasts", icon: "📣" },
   { href: "/coupons", label: "Coupons", icon: "🏷️" },
   { href: "/image-library", label: "Image Library", icon: "🖼️" },
+  { href: "/media-library", label: "Media Library", icon: "🗂️" },
   { href: "/orders", label: "Orders", icon: "🧾" },
   { href: "/customers", label: "Customers", icon: "👥" },
   { href: "/live-chat", label: "Live Chat", icon: "💬" },
@@ -57,7 +60,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-white">K</div>
             <div>
               <p className="text-sm font-semibold leading-tight text-slate-900">KelvionTech</p>
-              <p className="text-[11px] text-slate-400">Restaurant Platform</p>
+              <p className="text-[11px] text-slate-400">WhatsApp Business Platform</p>
             </div>
           </div>
 

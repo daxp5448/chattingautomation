@@ -93,19 +93,19 @@ function NewDisplayLink({ result, restaurantId, onDismiss }: { result: DisplayDe
 
 const STATUS_ACTIONS: Record<string, { to: "active" | "suspended" | "cancelled"; label: string; confirm: string; style: string }[]> = {
   active: [
-    { to: "suspended", label: "Suspend", confirm: "Suspend this restaurant? Its WhatsApp bot will stop taking orders immediately, but nothing is deleted -- reactivating brings it straight back.", style: "border border-amber-300 text-amber-700 hover:bg-amber-50" },
-    { to: "cancelled", label: "Cancel", confirm: "Cancel this restaurant? Its WhatsApp bot will stop taking orders. This is meant for a restaurant that's left the platform -- you can still reactivate it later if they come back.", style: "border border-red-300 text-red-700 hover:bg-red-50" },
+    { to: "suspended", label: "Suspend", confirm: "Suspend this business? Its WhatsApp bot will stop taking orders immediately, but nothing is deleted -- reactivating brings it straight back.", style: "border border-amber-300 text-amber-700 hover:bg-amber-50" },
+    { to: "cancelled", label: "Cancel", confirm: "Cancel this business? Its WhatsApp bot will stop taking orders. This is meant for a business that's left the platform -- you can still reactivate it later if they come back.", style: "border border-red-300 text-red-700 hover:bg-red-50" },
   ],
   onboarding: [
-    { to: "suspended", label: "Suspend", confirm: "Suspend this restaurant? Its WhatsApp bot will stop taking orders immediately, but nothing is deleted -- reactivating brings it straight back.", style: "border border-amber-300 text-amber-700 hover:bg-amber-50" },
-    { to: "cancelled", label: "Cancel", confirm: "Cancel this restaurant? Its WhatsApp bot will stop taking orders. This is meant for a restaurant that's left the platform -- you can still reactivate it later if they come back.", style: "border border-red-300 text-red-700 hover:bg-red-50" },
+    { to: "suspended", label: "Suspend", confirm: "Suspend this business? Its WhatsApp bot will stop taking orders immediately, but nothing is deleted -- reactivating brings it straight back.", style: "border border-amber-300 text-amber-700 hover:bg-amber-50" },
+    { to: "cancelled", label: "Cancel", confirm: "Cancel this business? Its WhatsApp bot will stop taking orders. This is meant for a business that's left the platform -- you can still reactivate it later if they come back.", style: "border border-red-300 text-red-700 hover:bg-red-50" },
   ],
   suspended: [
-    { to: "active", label: "Reactivate", confirm: "Reactivate this restaurant? Its WhatsApp bot will start taking orders again immediately.", style: "bg-emerald-600 text-white hover:bg-emerald-700" },
-    { to: "cancelled", label: "Cancel instead", confirm: "Cancel this restaurant instead of reactivating it? This is meant for a restaurant that's left the platform -- you can still reactivate it later if they come back.", style: "border border-red-300 text-red-700 hover:bg-red-50" },
+    { to: "active", label: "Reactivate", confirm: "Reactivate this business? Its WhatsApp bot will start taking orders again immediately.", style: "bg-emerald-600 text-white hover:bg-emerald-700" },
+    { to: "cancelled", label: "Cancel instead", confirm: "Cancel this business instead of reactivating it? This is meant for a business that's left the platform -- you can still reactivate it later if they come back.", style: "border border-red-300 text-red-700 hover:bg-red-50" },
   ],
   cancelled: [
-    { to: "active", label: "Reactivate", confirm: "Reactivate this cancelled restaurant? Its WhatsApp bot will start taking orders again immediately.", style: "bg-emerald-600 text-white hover:bg-emerald-700" },
+    { to: "active", label: "Reactivate", confirm: "Reactivate this cancelled business? Its WhatsApp bot will start taking orders again immediately.", style: "bg-emerald-600 text-white hover:bg-emerald-700" },
   ],
 };
 
@@ -192,8 +192,8 @@ function SubscriptionSection({ restaurant, onChanged }: { restaurant: Restaurant
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="flex items-center gap-2 font-medium text-slate-900">🔑 Subscription</h3>
       <p className="mt-1 text-sm text-slate-500">
-        Controls whether this restaurant's WhatsApp bot is allowed to take orders. Nothing here deletes data --
-        reactivating a suspended or cancelled restaurant brings it back exactly as it was.
+        Controls whether this business's WhatsApp bot is allowed to take orders. Nothing here deletes data --
+        reactivating a suspended or cancelled business brings it back exactly as it was.
       </p>
 
       <div className="mt-3 flex items-center gap-3">
@@ -268,6 +268,124 @@ function SubscriptionSection({ restaurant, onChanged }: { restaurant: Restaurant
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function DemoModeSection({ restaurant, onChanged }: { restaurant: Restaurant; onChanged: () => void }) {
+  const [templates, setTemplates] = useState<NicheTemplateSummary[]>([]);
+  const [selectedCodes, setSelectedCodes] = useState<string[]>(restaurant.demo_enabled_niche_codes ?? []);
+  const [allNiches, setAllNiches] = useState(restaurant.demo_enabled_niche_codes === null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<NicheTemplateSummary[]>("/niche-templates").then(setTemplates).catch(() => setTemplates([]));
+  }, []);
+
+  useEffect(() => {
+    setSelectedCodes(restaurant.demo_enabled_niche_codes ?? []);
+    setAllNiches(restaurant.demo_enabled_niche_codes === null);
+  }, [restaurant.id, restaurant.demo_enabled_niche_codes]);
+
+  function toggleCode(code: string) {
+    setSelectedCodes((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
+  }
+
+  async function toggleEnabled() {
+    const next = !restaurant.demo_mode_enabled;
+    if (next && !window.confirm(
+      `Turn on Industry Picker Mode for "${restaurant.name}"?\n\nAnyone who messages this business's connected WhatsApp number ` +
+      `-- including real customers -- will see the multi-industry picker instead of ${restaurant.name}'s real menu/order ` +
+      `flow, until you turn this back off.`
+    )) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiFetch(`/restaurants/${restaurant.id}/demo-mode`, { method: "PATCH", body: JSON.stringify({ enabled: next }) });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to toggle Industry Picker Mode");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveNiches() {
+    setSaving(true);
+    setError(null);
+    try {
+      await apiFetch(`/restaurants/${restaurant.id}/demo-mode`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: restaurant.demo_mode_enabled, niche_codes: allNiches ? null : selectedCodes }),
+      });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save niche selection");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={`rounded-xl border p-5 shadow-sm ${restaurant.demo_mode_enabled ? "border-violet-300 bg-violet-50" : "border-slate-200 bg-white"}`}>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="flex items-center gap-2 font-medium text-slate-900">🌐 Industry Picker Mode</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Temporarily repoint this business&apos;s own connected WhatsApp number at the multi-industry picker
+            instead of its real order flow -- useful for showing the platform to prospects on a number that&apos;s
+            already live. Turning this off restores normal order-taking immediately; no data is moved or deleted
+            either way.
+          </p>
+        </div>
+        <button
+          onClick={toggleEnabled}
+          disabled={saving || !restaurant.whatsapp_phone_number_id}
+          title={restaurant.whatsapp_phone_number_id ? undefined : "Connect a WhatsApp number first (see Settings below)"}
+          className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-50 ${
+            restaurant.demo_mode_enabled ? "bg-violet-600 text-white hover:bg-violet-700" : "border border-slate-300 text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          {restaurant.demo_mode_enabled ? "Industry Picker: ON -- turn off" : "Turn on Industry Picker"}
+        </button>
+      </div>
+
+      {restaurant.demo_mode_enabled && (
+        <p className="mt-3 rounded-lg bg-violet-100 px-3 py-2 text-xs font-medium text-violet-800">
+          ⚠️ Live right now: anyone messaging this number sees the industry picker, not {restaurant.name}&apos;s real menu.
+        </p>
+      )}
+      {!restaurant.whatsapp_phone_number_id && (
+        <p className="mt-3 text-xs text-amber-600">No WhatsApp number connected yet -- Industry Picker Mode needs a real number to route messages on.</p>
+      )}
+      {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+      <div className="mt-4 border-t border-slate-200 pt-3">
+        <p className="mb-2 text-xs font-medium text-slate-500">Which industries appear in the picker</p>
+        <label className="flex items-center gap-1.5 text-sm text-slate-700">
+          <input type="checkbox" checked={allNiches} onChange={(e) => setAllNiches(e.target.checked)} className="rounded border-slate-300" />
+          Show all industries currently available
+        </label>
+        {!allNiches && (
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
+            {templates.map((t) => (
+              <label key={t.code} className="flex items-center gap-1.5 text-sm text-slate-700">
+                <input type="checkbox" checked={selectedCodes.includes(t.code)} onChange={() => toggleCode(t.code)} className="rounded border-slate-300" />
+                {t.icon} {t.name}
+              </label>
+            ))}
+          </div>
+        )}
+        {!allNiches && selectedCodes.length === 0 && (
+          <p className="mt-1 text-xs text-amber-600">No industries selected -- the picker will show "no industries configured" until you pick at least one.</p>
+        )}
+        <button onClick={saveNiches} disabled={saving} className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60">
+          {saving ? "Saving..." : "Save industry selection"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -681,7 +799,7 @@ export default function RestaurantsPage() {
         setRestaurants([data]);
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to load restaurants");
+      setError(err instanceof ApiError ? err.message : "Failed to load businesses");
     } finally {
       setLoading(false);
     }
@@ -728,7 +846,7 @@ export default function RestaurantsPage() {
       await load();
       setRestaurantId(restaurant.id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create restaurant");
+      setError(err instanceof ApiError ? err.message : "Failed to create business");
     } finally {
       setCreating(false);
     }
@@ -737,9 +855,9 @@ export default function RestaurantsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Restaurants</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Businesses</h1>
         <p className="mt-1 text-sm text-slate-500">
-          {isSuperAdmin ? "Onboard a new restaurant in one step -- its owner login is created automatically." : "Your restaurant"}
+          {isSuperAdmin ? "Onboard a new business in one step -- its owner login is created automatically." : "Your business"}
         </p>
       </div>
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
@@ -750,7 +868,7 @@ export default function RestaurantsPage() {
         <form onSubmit={handleCreate} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-end gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-500">Restaurant name</label>
+              <label className="block text-xs font-medium text-slate-500">Business name</label>
               <input
                 required
                 autoFocus
@@ -808,14 +926,14 @@ export default function RestaurantsPage() {
             </div>
             <label className="flex items-center gap-1.5 pb-1.5 text-xs font-medium text-slate-500" title="Marks this as part of the Demo Bot (see /niches) instead of a real business -- excluded from business lists/counts.">
               <input type="checkbox" checked={isDemo} onChange={(e) => setIsDemo(e.target.checked)} className="rounded border-slate-300" />
-              Demo Bot restaurant
+              Demo Bot business
             </label>
             <button
               type="submit"
               disabled={creating}
               className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-white shadow-sm disabled:opacity-60"
             >
-              {creating ? "Creating..." : "+ Create restaurant"}
+              {creating ? "Creating..." : "+ Create business"}
             </button>
           </div>
           <p className="mt-2 text-xs text-slate-400">
@@ -844,7 +962,14 @@ export default function RestaurantsPage() {
             <tbody>
               {restaurants.map((r) => (
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                  <td className="px-4 py-3 font-medium text-slate-800">{r.name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-800">
+                    {r.name}
+                    {r.is_demo && (
+                      <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-700" title="Demo Bot business -- see /niches. Manage it below to view its own orders/live-chat.">
+                        Demo
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-slate-500">{r.slug}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={r.status} />
@@ -887,7 +1012,7 @@ export default function RestaurantsPage() {
               {restaurants.length === 0 && (
                 <tr>
                   <td colSpan={isSuperAdmin ? 6 : 5} className="px-4 py-6 text-center text-slate-400">
-                    No restaurants yet.
+                    No businesses yet.
                   </td>
                 </tr>
               )}
@@ -898,6 +1023,10 @@ export default function RestaurantsPage() {
 
       {isSuperAdmin && restaurantId && restaurants.find((r) => r.id === restaurantId) && (
         <SubscriptionSection restaurant={restaurants.find((r) => r.id === restaurantId)!} onChanged={load} />
+      )}
+
+      {isSuperAdmin && restaurantId && restaurants.find((r) => r.id === restaurantId) && (
+        <DemoModeSection restaurant={restaurants.find((r) => r.id === restaurantId)!} onChanged={load} />
       )}
 
       {restaurantId && restaurants.find((r) => r.id === restaurantId) && (

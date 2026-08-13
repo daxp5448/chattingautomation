@@ -71,6 +71,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.security import decrypt_secret
 from app.core.ws_manager import manager as ws_manager
 from app.models.customer import Customer
@@ -82,9 +84,10 @@ from app.repositories.catalog_repository import CatalogCategoryRepository, Catal
 from app.repositories.customer_repository import CustomerRepository
 from app.repositories.engagement_repository import EngagementRepository
 from app.repositories.flow_definition_repository import FlowDefinitionRepository
+from app.services import analytics
 from app.repositories.generic_conversation_repository import GenericConversationStateRepository
 from app.repositories.staff_member_repository import StaffMemberRepository
-from app.services.image_presenter import resolve_item_images
+from app.services.image_presenter import resolve_item_images, resolve_item_images_bulk
 from app.services.notification_service import notify_business
 from app.services.template_engine import render_template
 from app.services.whatsapp_client import OutboundMessage, WhatsAppSender
@@ -96,6 +99,12 @@ SKIP_REPLY_ID = "__skip__"
 
 _GREETING_WORDS = {"hi", "hello", "hey", "hii", "hola", "start", "menu", "yo", "sup", "namaste"}
 _PLACEHOLDER_IMAGE = "https://placehold.co/600x400?text={label}"
+# Photo-burst ceiling (see _photo_burst_urls / _send_options): a category can override
+# via step["photo_burst_max"] (a plain flow-step field, already editable via Flow
+# Builder/default_flow_steps like any other step property -- nothing new to build for
+# that knob). Kept low by default so a large catalog doesn't spam a customer with N
+# image messages before they even see the picker.
+_PHOTO_BURST_MAX_DEFAULT = 6
 
 # --- Phase 2 Item 3 (Drag & Drop Flow Builder): auto-advancing step types --------------
 # These 4 step types run without waiting for customer input -- see _advance_and_render,
@@ -114,6 +123,22 @@ _MAX_AUTO_ADVANCE_HOPS = 10
 # MAX_DELAY_SECONDS_PER_STEP for the complementary per-step sanity ceiling checked at
 # save time.
 _MAX_TOTAL_BLOCKING_SECONDS = 5.0
+
+# EngagementType -> the funnel event _create_engagement fires at the start/success of a
+# confirm_action, per app/services/analytics.py's vocabulary. ORDER has no distinct
+# *_COMPLETED event (FLOW_COMPLETED, fired from _render_step's terminal-step check,
+# covers it) -- see analytics.py's module docstring for the full reasoning.
+_STARTED_EVENT_BY_ENGAGEMENT_TYPE = {
+    EngagementType.ORDER: analytics.CHECKOUT_STARTED,
+    EngagementType.APPOINTMENT: analytics.BOOKING_STARTED,
+    EngagementType.BOOKING: analytics.BOOKING_STARTED,
+    EngagementType.INQUIRY: analytics.LEAD_STARTED,
+}
+_COMPLETED_EVENT_BY_ENGAGEMENT_TYPE = {
+    EngagementType.APPOINTMENT: analytics.BOOKING_COMPLETED,
+    EngagementType.BOOKING: analytics.BOOKING_COMPLETED,
+    EngagementType.INQUIRY: analytics.LEAD_COMPLETED,
+}
 
 
 def _to_number(value: Any) -> float:
@@ -169,9 +194,20 @@ async def process_inbound_message(
     from_phone: str,
     interaction: GenericInteraction,
     wa_message_id: str | None = None,
+    dry_run: bool = False,
 ) -> None:
     """Entry point called by webhook.py for every generic-engine business's inbound
     message -- the direct counterpart of flow_engine.py::process_inbound_message.
+
+    `dry_run=True` is used exclusively by the Super Admin Bot Preview simulator (see
+    app/api/v1/routers/flow_preview.py) -- runs every real step/message/catalog/variable
+    lookup through this exact function (never a separate fake preview engine), but never
+    creates a real Engagement/payment/staff-notification and never records a real
+    analytics event or live-chat broadcast (see `_Engine.dry_run`). The preview's own
+    Customer/GenericConversationState/Message rows ARE real and persisted (so a
+    multi-turn preview conversation has somewhere to keep its place between HTTP
+    requests) -- they simply belong to a synthetic, never-a-real-phone-number customer
+    the router creates, so they can never collide with or be mistaken for real traffic.
     """
     message_repo = _GenericMessageRepo(session)
     if wa_message_id:
@@ -204,6 +240,11 @@ async def process_inbound_message(
         )
         session.add(state)
         await session.flush()
+        if not dry_run:
+            analytics.record_event(
+                session, restaurant.id, analytics.FLOW_STARTED,
+                customer_id=customer.id, niche_code=flow_def.niche_code if flow_def else restaurant.niche_type,
+            )
 
     inbound_body = interaction.text or interaction.reply_id or "[unsupported message]"
     session.add(
@@ -216,7 +257,23 @@ async def process_inbound_message(
             wa_message_id=wa_message_id,
         )
     )
-    await session.flush()
+    if wa_message_id:
+        # Closes the race the plain existence-check above (line ~183) can't: two workers
+        # racing to process a genuinely-concurrent redelivery of the SAME wa_message_id
+        # can both pass that SELECT before either has inserted a row. Message.wa_message_id
+        # is a real unique DB constraint, so the loser's flush raises IntegrityError here --
+        # caught and treated as "someone else already claimed this inbound message" (the
+        # same outcome as the early-return above), rather than an unhandled 500 AND,
+        # crucially, BEFORE engine.handle() below has sent a single outbound message, so
+        # the loser can never produce a duplicate customer-visible send.
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            logger.info("Duplicate concurrent wa_message_id=%s -- another worker already claimed it", wa_message_id)
+            return
+    else:
+        await session.flush()
 
     if flow_def is None:
         await send_generic_message(session, sender, restaurant, customer.id, from_phone, OutboundMessage.text(
@@ -225,8 +282,53 @@ async def process_inbound_message(
         await session.commit()
         return
 
-    engine = _Engine(session, sender)
+    engine = _Engine(session, sender, dry_run=dry_run)
     await engine.handle(restaurant, customer, state, from_phone, flow_def, interaction)
+    await session.commit()
+
+
+async def preview_jump_to_step(session, sender: WhatsAppSender, restaurant: Restaurant, from_phone: str, step_id: str) -> None:
+    """The Bot Preview simulator's "Preview This Step" action (see
+    app/api/v1/routers/flow_preview.py) -- renders one step's CURRENT message/image/
+    buttons directly, without walking the customer through every step that would
+    normally precede it. Always dry_run (this exists only for the admin to sanity-check
+    one node's presentation, never to create real data), and always resets the given
+    preview session's state/context first, since a step reached this way has none of the
+    context a real conversation would have built up (no captured category/item/etc) --
+    render_template leaves any {{variable}} it can't resolve as an empty string (see
+    template_engine.py) rather than raising, so this is safe even for a step deep in a
+    niche's flow, just visibly incomplete for variables only real navigation would fill in.
+
+    Reuses `_Engine._render_step` directly -- the exact function every real render (and
+    the ordinary preview_turn path above) goes through -- rather than any separate
+    preview-only rendering logic.
+    """
+    customer_repo = CustomerRepository(session)
+    customer = await customer_repo.get_or_create(restaurant.id, from_phone)
+    state_repo = GenericConversationStateRepository(session)
+    state = await state_repo.get_for_update_by_customer(customer.id)
+    flow_repo = FlowDefinitionRepository(session)
+    flow_def = await flow_repo.get_by_restaurant(restaurant.id)
+    if flow_def is None:
+        return
+    steps_by_id = {s["step_id"]: s for s in flow_def.steps}
+    step = steps_by_id.get(step_id)
+    if step is None:
+        return
+
+    if state is None:
+        from app.models.generic_conversation_state import GenericConversationState
+
+        state = GenericConversationState(restaurant_id=restaurant.id, customer_id=customer.id, current_step=step_id, context={})
+        session.add(state)
+    else:
+        state.current_step = step_id
+        state.context = {}
+        state.is_handed_over = False
+    await session.flush()
+
+    engine = _Engine(session, sender, dry_run=True)
+    await engine._render_step(restaurant, customer, state, from_phone, step, steps_by_id)
     await session.commit()
 
 
@@ -274,13 +376,30 @@ async def send_generic_message(session, sender: WhatsAppSender, restaurant: Rest
 
 
 class _Engine:
-    def __init__(self, session, sender: WhatsAppSender):
+    def __init__(self, session, sender: WhatsAppSender, dry_run: bool = False):
         self.session = session
         self.sender = sender
         self.category_repo = CatalogCategoryRepository(session)
         self.item_repo = CatalogItemRepository(session)
         self.staff_repo = StaffMemberRepository(session)
         self.engagement_repo = EngagementRepository(session)
+        # True only for the Super Admin Bot Preview simulator (see
+        # app/api/v1/routers/flow_preview.py) -- runs every real step/message/catalog/
+        # variable lookup through this exact class (never a separate fake preview
+        # engine), but never writes an Engagement/payment/staff-notification, never
+        # records a real analytics event, and never broadcasts a live-chat websocket
+        # signal for what is, by construction, not a real customer.
+        self.dry_run = dry_run
+
+    def _record_event(self, restaurant_id, event_type, **kwargs) -> None:
+        if self.dry_run:
+            return
+        analytics.record_event(self.session, restaurant_id, event_type, **kwargs)
+
+    async def _broadcast(self, restaurant_id, payload: dict) -> None:
+        if self.dry_run:
+            return
+        await ws_manager.broadcast(restaurant_id, payload)
 
     # --- top-level dispatch ----------------------------------------------------------
 
@@ -291,15 +410,14 @@ class _Engine:
         # don't advance" falls out for free; this just broadcasts a live-update signal so
         # staff watching the handed-off conversation see the new message arrive.
         if state.is_handed_over:
-            await ws_manager.broadcast(
-                restaurant.id, {"type": "generic_inbound_while_handed_off", "customer_id": str(customer.id)}
-            )
+            await self._broadcast(restaurant.id, {"type": "generic_inbound_while_handed_off", "customer_id": str(customer.id)})
             return
 
         steps_by_id = {s["step_id"]: s for s in flow_def.steps}
 
         if interaction.kind == "text" and _looks_like_greeting(interaction.text or ""):
             state.context = {}
+            self._record_event(restaurant.id, analytics.FLOW_STARTED, customer_id=customer.id, niche_code=flow_def.niche_code)
             await self._advance_and_render(restaurant, customer, state, from_phone, steps_by_id[flow_def.entry_step_id], steps_by_id)
             return
 
@@ -336,6 +454,11 @@ class _Engine:
             if matched is None:
                 await self._render_step(restaurant, customer, state, from_phone, step, steps_by_id, invalid=True)
                 return
+            self._record_event(
+                restaurant.id, analytics.BUTTON_CLICKED,
+                customer_id=customer.id, step_id=step.get("step_id"), niche_code=restaurant.niche_type,
+                details={"reply_id": matched["id"]},
+            )
             if step.get("capture_key"):
                 # Store the raw id (after the "namespace:" prefix -- "category:<uuid>",
                 # "date:<iso>", "staff:<uuid>"/"staff:any"), not the full prefixed
@@ -346,6 +469,12 @@ class _Engine:
                 _, _, raw_value = matched["id"].partition(":")
                 context[step["capture_key"]] = raw_value or matched["id"]
                 context[f"{step['capture_key']}_label"] = matched.get("title", "")
+                if step["capture_key"] == "item_id":
+                    # Friendlier aliases for message-template authors -- {{service_name}}
+                    # reads naturally in an appointment niche's copy, {{product_name}} in
+                    # an order/inquiry niche's, both point at the same captured value.
+                    context["service_name"] = matched.get("title", "")
+                    context["product_name"] = matched.get("title", "")
             state.context = context
             if step.get("action"):
                 await self._run_action(restaurant, customer, state, from_phone, step["action"], matched, context)
@@ -372,6 +501,7 @@ class _Engine:
             else:
                 await self._render_step(restaurant, customer, state, from_phone, step, steps_by_id, invalid=True)
                 return
+            context["quantity"] = str(qty)
             state.context = context
             if step.get("action"):
                 await self._run_action(restaurant, customer, state, from_phone, step["action"], {"qty": qty}, context)
@@ -387,6 +517,10 @@ class _Engine:
                     await self._render_step(restaurant, customer, state, from_phone, step, steps_by_id, invalid=True)
                     return
                 context[step.get("capture_key", "note")] = text
+                if step.get("capture_key") == "delivery_address":
+                    # {{address}} alias -- delivery_address is the one free_text_input
+                    # capture_key name that "address" naturally refers to across niches.
+                    context["address"] = text
             state.context = context
             await self._advance(restaurant, customer, state, from_phone, self._resolve_next(step, None), steps_by_id)
             return
@@ -547,15 +681,33 @@ class _Engine:
 
         show_back = bool(step.get("back_target"))
 
+        # NODE_VIEWED fires for every step actually shown to a customer, including an
+        # invalid-input re-render of the same step -- it's still a real view of that
+        # node. See app/services/analytics.py's module docstring for the event vocabulary.
+        self._record_event(
+            restaurant.id, analytics.NODE_VIEWED,
+            customer_id=customer.id, step_id=step.get("step_id"), niche_code=restaurant.niche_type,
+            details={"step_type": step["type"], "invalid": invalid},
+        )
+        if step.get("terminal"):
+            self._record_event(
+                restaurant.id, analytics.FLOW_COMPLETED,
+                customer_id=customer.id, step_id=step.get("step_id"), niche_code=restaurant.niche_type,
+            )
+
         if step["type"] in ("message",):
             await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.text(from_phone, prompt))
             return
 
         if step["type"] == "human_handoff":
-            handoff_message = step.get("message") or "🧑‍💼 Connecting you with our team -- someone will reply here shortly."
+            handoff_message = prompt or "🧑‍💼 Connecting you with our team -- someone will reply here shortly."
             await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.text(from_phone, handoff_message))
             state.is_handed_over = True
-            await ws_manager.broadcast(restaurant.id, {"type": "generic_handover", "customer_id": str(customer.id)})
+            self._record_event(
+                restaurant.id, analytics.HUMAN_HANDOFF,
+                customer_id=customer.id, step_id=step.get("step_id"), niche_code=restaurant.niche_type,
+            )
+            await self._broadcast(restaurant.id, {"type": "generic_handover", "customer_id": str(customer.id)})
             return
 
         if step["type"] == "free_text_input":
@@ -576,6 +728,35 @@ class _Engine:
                 await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.location_request(from_phone, "Or share your live location:"))
             return
 
+        if step["type"] == "send_whatsapp_flow":
+            # Opt-in per restaurant (whatsapp_flow_order_id set via
+            # POST .../whatsapp-flow/enable) -- see the approved "WhatsApp Flows for
+            # Ordering" plan. A niche whose step routes here but whose restaurant hasn't
+            # enabled it falls back to `fallback_next` (defaulting to `next`, the same
+            # field every other step already has), so this is safe to route to
+            # unconditionally from a niche's welcome step without a per-business branch
+            # in the flow graph itself.
+            if not restaurant.whatsapp_flow_order_id:
+                fallback = steps_by_id.get(step.get("fallback_next") or step.get("next") or "")
+                if fallback:
+                    await self._advance_and_render(restaurant, customer, state, from_phone, fallback, steps_by_id)
+                return
+            # Local import -- whatsapp_flow_order_service.py itself imports _Engine/
+            # _price_label from this module (to reuse _create_engagement rather than
+            # duplicating order-creation logic), so a module-level import here would be
+            # circular. Resolved lazily at call time instead, a standard way to break this
+            # specific shape of two-way dependency.
+            from app.services.whatsapp_flow_order_service import initial_screen_data
+            data = await initial_screen_data(self.session, restaurant)
+            await send_generic_message(
+                self.session, self.sender, restaurant, customer.id, from_phone,
+                OutboundMessage.flow(
+                    from_phone, prompt, restaurant.whatsapp_flow_order_id, from_phone,
+                    step.get("cta") or "Order Now", "CATEGORY_SCREEN", data,
+                ),
+            )
+            return
+
         if step["type"] == "quantity_input":
             options = [
                 {"id": "qty:1", "title": "1"},
@@ -591,34 +772,104 @@ class _Engine:
         await self._send_options(restaurant, customer, from_phone, prompt, options, show_back, step, state.context)
 
     async def _prompt_text(self, restaurant: Restaurant, customer: Customer, step: dict, context: dict) -> str:
-        template = step.get("prompt") or ""
+        # human_handoff steps store their text under "message" rather than "prompt" (see
+        # the niche seed files) -- falls back to it so handoff copy gets the same
+        # {{business_name}}/{{customer_name}}/etc. substitution as every other step type,
+        # instead of being sent to the customer with the raw, unrendered placeholders.
+        template = step.get("prompt") or step.get("message") or ""
         # customer_name prefers an explicit override the customer typed at an "Edit Name"
         # step (context["customer_name_override"], if a niche's flow captures one) over
         # the WhatsApp-profile-seeded Customer.name, which itself may still be empty for
         # a first-time contact whose profile has no display name set.
         customer_name = context.get("customer_name_override") or customer.name or ""
+        # {{date}}/{{time}} are today's-server-clock convenience variables for generic
+        # copy ("we're open until {{time}}") -- distinct from an appointment/booking's
+        # own captured {{date_label}}/{{time_label}}, which come from context and always
+        # win below since **context is spread after these two.
+        now = datetime.now(timezone.utc)
         return render_template(
             template,
-            {"restaurant_name": restaurant.name, "currency": restaurant.currency, "customer_name": customer_name, **context},
+            {
+                # business_name is the forward-looking variable name (matches the
+                # Super-Admin message-override convention the platform is moving
+                # towards); restaurant_name is kept working for any existing content.
+                "restaurant_name": restaurant.name,
+                "business_name": restaurant.name,
+                "currency": restaurant.currency,
+                "customer_name": customer_name,
+                "date": now.strftime("%d %b %Y"),
+                "time": now.strftime("%I:%M %p"),
+                **context,
+            },
         )
+
+    def _photo_burst_urls(self, restaurant: Restaurant, options: list[dict]) -> list[str] | None:
+        """All-or-nothing gate: fires only when EVERY option carries its own genuine,
+        mutually-distinct photo -- not missing, not the restaurant's generic cover/logo/
+        placeholder fallback, not reused by any other option in the set. A partially-
+        photographed category (some items on a real photo, the rest still on a shared
+        fallback) deliberately returns None here rather than bursting a mismatched mix --
+        see the approved design review that flagged exactly this case as worse UX than
+        the single combo-image it would replace."""
+        fallbacks = {restaurant.cover_image_url, restaurant.logo_url, _PLACEHOLDER_IMAGE.format(label=restaurant.name.replace(" ", "+"))}
+        urls = [o.get("image_url") for o in options]
+        if any(not u or u in fallbacks for u in urls):
+            return None
+        if len(set(urls)) != len(urls):
+            return None
+        return urls
 
     async def _send_options(self, restaurant, customer, from_phone, body, options, show_back, step, context) -> None:
         all_options = list(options)
         if show_back:
             all_options.append({"id": BACK_REPLY_ID, "title": "⬅ Back"})
 
-        image_url = await self._image_for_step(restaurant, step, context)
-        if image_url and step.get("show_image", True):
-            caption_lines = [body]
-            if step["type"] == "menu_select" and step.get("buttons_from") in ("categories", "items"):
-                # Include the description (items already carry price/duration in
-                # "description" via _price_label -- see _resolve_options) so the image
-                # caption is a real menu/catalog preview, not just a bare name list.
-                caption_lines += [
-                    f"• {o['title']}" + (f" - {o['description']}" if o.get("description") else "")
-                    for o in options[:10]
-                ]
-            await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.image(from_phone, image_url, "\n".join(caption_lines)[:1024]))
+        show_images = step.get("show_image", True)
+        is_menu_select = step["type"] == "menu_select" and step.get("buttons_from") in ("categories", "items")
+
+        burst_urls = None
+        if show_images and is_menu_select and options and len(options) <= step.get("photo_burst_max", _PHOTO_BURST_MAX_DEFAULT):
+            burst_urls = self._photo_burst_urls(restaurant, options)
+
+        if burst_urls:
+            # Every option gets its own photo in sequence -- a real "album" browse
+            # instead of one representative image + a text list. See _photo_burst_urls
+            # for the strict gate that decides whether this path runs at all.
+            await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.text(from_phone, body))
+            for option, url in zip(options, burst_urls):
+                caption = option["title"] + (f" - {option['description']}" if option.get("description") else "")
+                await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.image(from_phone, url, caption[:1024]))
+        elif show_images and step.get("item_context_key"):
+            # An "item detail" step (e.g. "Ring Details") keyed on a previously-selected
+            # item -- sends EVERY active image Super Admin has curated for that item, each
+            # as its own message with its own caption, in display_order. WhatsApp has no
+            # native multi-image carousel for a plain text/interactive message, so a
+            # sequence of individual image messages is the actual supported mechanism (see
+            # the burst path above, which does the same thing for a list of options).
+            gallery = await self._item_gallery(restaurant, context.get(step["item_context_key"]))
+            if gallery:
+                for img in gallery:
+                    await send_generic_message(
+                        self.session, self.sender, restaurant, customer.id, from_phone,
+                        OutboundMessage.image(from_phone, img.url, (img.caption or body)[:1024]),
+                    )
+            else:
+                image_url = await self._image_for_step(restaurant, step, context)
+                if image_url:
+                    await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.image(from_phone, image_url, body[:1024]))
+        elif show_images:
+            image_url = await self._image_for_step(restaurant, step, context)
+            if image_url:
+                caption_lines = [body]
+                if is_menu_select:
+                    # Include the description (items already carry price/duration in
+                    # "description" via _price_label -- see _resolve_options) so the image
+                    # caption is a real menu/catalog preview, not just a bare name list.
+                    caption_lines += [
+                        f"• {o['title']}" + (f" - {o['description']}" if o.get("description") else "")
+                        for o in options[:10]
+                    ]
+                await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.image(from_phone, image_url, "\n".join(caption_lines)[:1024]))
 
         # Meta caps interactive-button messages at 3 total buttons; use a list (cap 10)
         # whenever that would be exceeded, so Back always has room instead of getting
@@ -634,6 +885,18 @@ class _Engine:
                 self.session, self.sender, restaurant, customer.id, from_phone,
                 OutboundMessage.interactive_list(from_phone, body, "Select", rows, step.get("section_title", "Options")),
             )
+
+    async def _item_gallery(self, restaurant: Restaurant, item_id: str | None):
+        """Every active image curated for one specific item (see
+        app/services/image_presenter.py), already ordered and caption-bearing -- the data
+        source for an "item detail" step's photo gallery. Empty list (not an error) when
+        item_id is unset/unresolvable or the item has no images yet."""
+        if not item_id:
+            return []
+        item = await self.item_repo.get(uuid.UUID(item_id), restaurant.id)
+        if not item:
+            return []
+        return await resolve_item_images(self.session, item, restaurant.id)
 
     async def _image_for_step(self, restaurant: Restaurant, step: dict, context: dict) -> str | None:
         source = step.get("buttons_from")
@@ -652,15 +915,14 @@ class _Engine:
                     # list otherwise -- see image_presenter.py's module docstring.
                     images = await resolve_item_images(self.session, item, restaurant.id)
                     if images:
-                        return images[0]
+                        return images[0].url
         elif step.get("item_context_key"):
-            item_id = context.get(step["item_context_key"])
-            if item_id:
-                item = await self.item_repo.get(uuid.UUID(item_id), restaurant.id)
-                if item:
-                    images = await resolve_item_images(self.session, item, restaurant.id)
-                    if images:
-                        return images[0]
+            # An "item detail" step (e.g. "Ring Details") sends its FULL image gallery via
+            # _send_options's own item_context_key branch (_item_gallery), which calls
+            # this function only as ITS OWN fallback when that item has zero images --
+            # falls through to the restaurant-level fallback below in that case, rather
+            # than silently sending nothing.
+            pass
         if step.get("id") == "welcome" or source == "welcome":
             return restaurant.cover_image_url or restaurant.logo_url
         return restaurant.cover_image_url or _PLACEHOLDER_IMAGE.format(label=restaurant.name.replace(" ", "+"))
@@ -684,18 +946,27 @@ class _Engine:
 
         if source == "categories":
             categories = await self.category_repo.list_visible(restaurant.id)
-            return [{"id": f"category:{c.id}", "title": c.name} for c in categories]
+            # image_url carried per-option so _send_options can decide whether every
+            # option has its own distinct photo (photo-burst gating) -- free here, the
+            # column is already on the fetched row, no extra query.
+            return [{"id": f"category:{c.id}", "title": c.name, "image_url": c.image_url} for c in categories]
 
         if source == "items":
             category_id = context.get(step.get("category_context_key", "category_id"))
             if not category_id:
                 return []
             items = await self.item_repo.list_by_category(uuid.UUID(category_id), restaurant.id)
+            # Batched (one query for the whole category) rather than resolve_item_images
+            # per item -- see image_presenter.py::resolve_item_images_bulk's docstring;
+            # every option needs its own image up front for photo-burst gating, not just
+            # the first hit _image_for_step used to stop at.
+            images_by_item = await resolve_item_images_bulk(self.session, items, restaurant.id)
             return [
                 {
                     "id": f"item:{i.id}",
                     "title": i.name,
                     "description": _price_label(restaurant, i, include_attributes=True),
+                    "image_url": next((img.url for img in images_by_item.get(i.id, [])), None),
                 }
                 for i in items
             ]
@@ -736,10 +1007,17 @@ class _Engine:
             if not pending:
                 return
             cart = context.get("cart", [])
+            cart_was_empty = len(cart) == 0
             cart.append({**pending, "qty": matched.get("qty", 1)})
             context["cart"] = cart
             context.pop("pending_item", None)
             self._refresh_cart_summary(restaurant, context)
+            if cart_was_empty:
+                self._record_event(restaurant.id, analytics.CART_STARTED, customer_id=customer.id, niche_code=restaurant.niche_type)
+            self._record_event(
+                restaurant.id, analytics.PRODUCT_ADDED,
+                customer_id=customer.id, niche_code=restaurant.niche_type, details={"item_id": pending.get("item_id")},
+            )
             return
 
         if verb == "capture_pending_item":
@@ -753,6 +1031,14 @@ class _Engine:
                 # pending_item dict itself isn't directly renderable.
                 context["pending_item_name"] = item.name
                 context["pending_item_price"] = _price_label(restaurant, item, include_attributes=True)
+                # Friendlier aliases for message-template authors, same reasoning as the
+                # item_id capture-key aliasing in _process_input above.
+                context["service_name"] = item.name
+                context["product_name"] = item.name
+                self._record_event(
+                    restaurant.id, analytics.PRODUCT_VIEWED,
+                    customer_id=customer.id, niche_code=restaurant.niche_type, details={"item_id": str(item.id)},
+                )
             return
 
         if verb == "remove_cart_line":
@@ -783,11 +1069,18 @@ class _Engine:
             if check_in and check_out:
                 nights = max((date.fromisoformat(check_out) - date.fromisoformat(check_in)).days, 1)
             cart = context.get("cart", [])
+            cart_was_empty = len(cart) == 0
             cart.append({**pending, "qty": nights})
             context["cart"] = cart
             context["nights"] = nights
             context.pop("pending_item", None)
             self._refresh_cart_summary(restaurant, context)
+            if cart_was_empty:
+                self._record_event(restaurant.id, analytics.CART_STARTED, customer_id=customer.id, niche_code=restaurant.niche_type)
+            self._record_event(
+                restaurant.id, analytics.PRODUCT_ADDED,
+                customer_id=customer.id, niche_code=restaurant.niche_type, details={"item_id": pending.get("item_id"), "nights": nights},
+            )
             return
 
         if verb in ("create_engagement", "create_engagement_paid"):
@@ -815,9 +1108,39 @@ class _Engine:
         flow_def = await flow_repo.get_by_restaurant(restaurant.id)
         engagement_type = flow_def.action_type
 
+        # STARTED fires here (not at confirm-step render) so it always reflects a real
+        # attempt to complete, not just a customer viewing the review card -- see
+        # app/services/analytics.py's module docstring for the full event vocabulary.
+        started_event = _STARTED_EVENT_BY_ENGAGEMENT_TYPE.get(engagement_type)
+        if started_event:
+            self._record_event(restaurant.id, started_event, customer_id=customer.id, step_id=state.current_step, niche_code=flow_def.niche_code)
+
         cart = context.get("cart", [])
         subtotal = sum(line["price"] * line["qty"] for line in cart)
         total = subtotal  # tax/delivery kept at 0 for this pass -- see final report note.
+
+        if self.dry_run:
+            # Bot Preview: never create a real Engagement/EngagementItem row, never touch
+            # stock, never generate a real payment link, never notify staff -- see
+            # app/api/v1/routers/flow_preview.py's module docstring. Synthesizes the same
+            # context keys a real create_engagement call sets so the terminal
+            # confirmation message still renders correctly, with obviously-fake
+            # placeholder data instead of a real reference number.
+            context["last_reference_number"] = "PREVIEW-0000"
+            context["order_id"] = "PREVIEW-0000"
+            context["booking_id"] = "PREVIEW-0000"
+            context["last_total"] = f"{total:.2f}"
+            context["payment_link_url"] = ""
+            context["cart"] = []
+            state.context = context
+            completed_event = _COMPLETED_EVENT_BY_ENGAGEMENT_TYPE.get(engagement_type)
+            if completed_event:
+                self._record_event(
+                    restaurant.id, completed_event,
+                    customer_id=customer.id, step_id=state.current_step, niche_code=flow_def.niche_code,
+                    details={"reference_number": "PREVIEW-0000"},
+                )
+            return True
 
         # Atomic check-and-decrement per line, same guarantee as the legacy engine's
         # stock handling -- reject-with-message rather than oversell if a concurrent
@@ -876,8 +1199,20 @@ class _Engine:
         await self.engagement_repo.get_with_items(engagement.id, restaurant.id)
 
         context["last_reference_number"] = engagement.reference_number
+        # {{order_id}}/{{booking_id}} aliases -- same reference number, named per the
+        # two vocabularies message-template authors actually use depending on niche.
+        context["order_id"] = engagement.reference_number
+        context["booking_id"] = engagement.reference_number
         context["last_total"] = f"{total:.2f}"
         context["cart"] = []
+
+        completed_event = _COMPLETED_EVENT_BY_ENGAGEMENT_TYPE.get(engagement_type)
+        if completed_event:
+            self._record_event(
+                restaurant.id, completed_event,
+                customer_id=customer.id, step_id=state.current_step, niche_code=flow_def.niche_code,
+                details={"reference_number": engagement.reference_number},
+            )
 
         # Only for money-bearing engagements (order/booking with a non-zero total) -- an
         # inquiry/appointment never reaches here with requires_payment set. See
@@ -894,6 +1229,11 @@ class _Engine:
         if engagement.requires_payment and total > 0 and not restaurant.is_demo:
             from app.services.payment.generic_razorpay import create_payment_link
 
+            self._record_event(
+                restaurant.id, analytics.PAYMENT_STARTED,
+                customer_id=customer.id, niche_code=flow_def.niche_code,
+                details={"reference_number": engagement.reference_number, "total": str(total)},
+            )
             result = await create_payment_link(restaurant, engagement)
             if result.get("payment_link_url"):
                 engagement.gateway_metadata = {**engagement.gateway_metadata, **result}
@@ -901,9 +1241,17 @@ class _Engine:
                 context["payment_link_url"] = result["payment_link_url"]
                 await self.session.flush()
             else:
-                context["payment_link_url"] = None
+                # No real gateway configured (or the call failed) -- every order/booking
+                # niche's confirmation copy has a bare "{{payment_link_url}}" line (see
+                # niche_seeds/*.py), which would otherwise collapse to a blank line and
+                # read as broken. A plain-language fallback keeps the message coherent
+                # without implying a link was actually sent.
+                context["payment_link_url"] = "💳 We'll share a secure payment link here shortly, or you can pay on delivery/pickup."
         elif engagement.requires_payment and total > 0:
-            context["payment_link_url"] = None
+            # `restaurant.is_demo` guard above skipped real gateway creation entirely --
+            # same fallback copy, so a demo business's order confirmation reads the same
+            # as a real one that's still waiting on its payment link.
+            context["payment_link_url"] = "💳 We'll share a secure payment link here shortly, or you can pay on delivery/pickup."
 
         state.context = context
 
@@ -912,7 +1260,7 @@ class _Engine:
         # staff_notification_number happens to be unset.
         if not restaurant.is_demo:
             await notify_business(self.session, self.sender, restaurant, engagement, customer)
-        await ws_manager.broadcast(restaurant.id, {"type": "engagement_created", "engagement_id": str(engagement.id)})
+        await self._broadcast(restaurant.id, {"type": "engagement_created", "engagement_id": str(engagement.id)})
         return True
 
     async def _time_slot_options(self, restaurant, context: dict) -> list[dict[str, Any]]:

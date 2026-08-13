@@ -191,7 +191,7 @@ async def test_full_order_flow_with_cart_and_back_navigation(db_session, grocery
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "Hi", profile_name=CUSTOMER_PROFILE_NAME)
     welcome_options = _extract_options(_last_interactive(sender))
     assert [o["id"] for o in welcome_options] == [
-        "welcome:order", "welcome:browse", "welcome:offers", "welcome:store", "welcome:contact",
+        "welcome:order", "welcome:cart", "welcome:offers", "welcome:store", "welcome:contact", "welcome:human",
     ]
     customer = await _get_customer(db_session, restaurant.id)
     assert customer.name == CUSTOMER_PROFILE_NAME  # auto-pulled from the WhatsApp profile
@@ -430,3 +430,23 @@ async def test_sold_out_item_blocks_checkout_with_friendly_message(db_session, g
 
     sold_out_message = _last_message_to(sender, CUSTOMER_PHONE)
     assert "sold out" in _body_text(sold_out_message).lower()
+
+
+async def test_talk_to_human_hands_off_and_pauses_automation(db_session, grocery_tenant, sender):
+    """The welcome menu's new "Talk to a Human" entry (human_handoff step type) must set
+    is_handed_over and stop the automated flow from advancing on further messages."""
+    restaurant = grocery_tenant
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:human")
+
+    customer = await _get_customer(db_session, restaurant.id)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"
+    assert state.is_handed_over is True
+    handoff_message = _last_message_to(sender, CUSTOMER_PHONE)
+    assert "connecting" in _body_text(handoff_message).lower()
+
+    # Automation stays paused -- a further message doesn't advance the flow.
+    await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hello?")
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "human_handoff"

@@ -99,8 +99,10 @@ async def test_full_home_buttons_read_and_update_round_trip(db_session, client):
     initial = await client.get(f"/api/v1/restaurants/{restaurant.id}/flow/home-buttons", headers=headers)
     assert initial.status_code == 200
     initial_buttons = initial.json()["buttons"]
-    assert len(initial_buttons) == 5  # restaurant.py's welcome step has 5 static_options
-    assert {b["id"] for b in initial_buttons} == {"welcome:order", "welcome:menu", "welcome:offers", "welcome:location", "welcome:contact"}
+    assert len(initial_buttons) == 6  # restaurant.py's welcome step has 6 static_options
+    assert {b["id"] for b in initial_buttons} == {
+        "welcome:order", "welcome:cart", "welcome:offers", "welcome:location", "welcome:contact", "welcome:human",
+    }
     # Every existing button's destination resolved correctly (via routes or next fallback).
     by_id = {b["id"]: b for b in initial_buttons}
     assert by_id["welcome:order"]["destination_step_id"] == "category_select"
@@ -235,3 +237,42 @@ async def test_hidden_button_is_untappable_through_the_real_engine(db_session, c
     db_session.expire_all()
     state_after = (await db_session.execute(select(GenericConversationState).where(GenericConversationState.customer_id == customer_id))).scalar_one()
     assert state_after.current_step == "welcome"  # never advanced to contact_info
+
+
+# --- generalized per-step buttons editor (Bot Preview side-by-side editor) --------------
+
+
+async def test_get_and_update_buttons_on_a_non_entry_step(db_session, client):
+    """GET/PATCH /flow/steps/{step_id}/buttons -- the same _extract_home_buttons/
+    _apply_home_buttons machinery as /home-buttons, generalized to any step_id."""
+    restaurant, creds = await _make_owner_tenant(db_session, "stepbuttons")
+    headers = await _login(client, **creds)
+
+    initial = await client.get(f"/api/v1/restaurants/{restaurant.id}/flow/steps/cart_menu/buttons", headers=headers)
+    assert initial.status_code == 200, initial.text
+    initial_ids = {b["id"] for b in initial.json()["buttons"]}
+    assert initial_ids == {"cart:add_more", "cart:checkout"}
+
+    updated = await client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/flow/steps/cart_menu/buttons", headers=headers,
+        json={"buttons": [
+            {"id": "cart:add_more", "title": "Add More", "icon": None, "visible": True, "destination_step_id": "category_select"},
+            {"id": "cart:checkout", "title": "Checkout Now", "icon": "✅", "visible": True, "destination_step_id": "address_capture"},
+        ]},
+    )
+    assert updated.status_code == 200, updated.text
+    by_id = {b["id"]: b for b in updated.json()["buttons"]}
+    assert by_id["cart:checkout"]["title"] == "Checkout Now"
+    assert by_id["cart:checkout"]["icon"] == "✅"
+
+    # Every other step in the flow is untouched.
+    full_flow = await client.get(f"/api/v1/restaurants/{restaurant.id}/flow", headers=headers)
+    welcome_step = next(s for s in full_flow.json()["steps"] if s["step_id"] == "welcome")
+    assert len(welcome_step["static_options"]) == 6
+
+
+async def test_step_buttons_endpoint_404s_for_unknown_step(db_session, client):
+    restaurant, creds = await _make_owner_tenant(db_session, "stepbuttons404")
+    headers = await _login(client, **creds)
+    resp = await client.get(f"/api/v1/restaurants/{restaurant.id}/flow/steps/not_a_real_step/buttons", headers=headers)
+    assert resp.status_code == 404

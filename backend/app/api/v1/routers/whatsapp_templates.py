@@ -37,7 +37,7 @@ _EDITABLE_STATUSES = {TemplateStatus.DRAFT, TemplateStatus.REJECTED}
 async def _get_restaurant_or_404(db, tenant_id: uuid.UUID):
     restaurant = await RestaurantRepository(db).get(tenant_id)
     if not restaurant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
     return restaurant
 
 

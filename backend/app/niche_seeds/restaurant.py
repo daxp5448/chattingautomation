@@ -20,25 +20,18 @@ Order-flow shape (context keys a completed order's Engagement.details carries):
   after every cart mutation -- see generic_flow_engine.py::_Engine._refresh_cart_summary).
 `create_engagement` reads its EngagementType off the FlowDefinition itself (not off any
 step) and sets requires_payment=True automatically whenever the cart is non-empty.
+
+The welcome menu routes straight to a single primary action (no redundant second button
+pointing at the same category_select destination), plus a direct "View Cart" entry (so
+the cart is reachable without walking the full browse chain -- reuses the existing
+cart_menu step unchanged) and a "Talk to a Human" entry using the engine's
+human_handoff step type (see generic_flow_engine.py's HUMAN_HANDOFF handling), which no
+niche used before this redesign.
 """
 
 from app.niche_seeds._media import demo_image_base
 
 
-_PLACEHOLDER = "https://placehold.co/{size}?text={text}"
-
-
-def _img(size: str, text: str) -> str:
-    return _PLACEHOLDER.format(size=size, text=text.replace(" ", "+").replace("&", "%26"))
-
-
-# Real demo photos (Wikimedia Commons, free-licensed), uploaded to this deployment's own
-# S3/MinIO bucket for a permanent (non-expiring) URL -- see
-# backend/scripts/demo_asset_upload.py. The base URL comes from
-# settings.PUBLIC_MEDIA_BASE_URL (see app/niche_seeds/_media.py) -- defaults to raw
-# MinIO (only reachable from this machine); point it at a publicly-tunnelled URL or a
-# real bucket before testing on a real WhatsApp number (same requirement GOING_LIVE.md
-# documents for the webhook itself), then re-run sync_niche_templates once.
 _DEMO_IMG_BASE = demo_image_base("restaurant")
 _IMG_WELCOME = f"{_DEMO_IMG_BASE}/welcome.jpg"
 _IMG_STARTERS = f"{_DEMO_IMG_BASE}/starters.jpg"
@@ -46,20 +39,23 @@ _IMG_MAIN_COURSE = f"{_DEMO_IMG_BASE}/main_course.jpg"
 _IMG_BEVERAGES = f"{_DEMO_IMG_BASE}/beverages.jpg"
 _IMG_DESSERTS = f"{_DEMO_IMG_BASE}/desserts.jpg"
 
+_WELCOME_TEXT = "\U0001f37d Welcome to {{business_name}}! Order your favourites in seconds."
+
 
 TEMPLATE = {
     "code": "restaurant",
     "name": "Restaurant",
     "action_type": "order",
     "icon": "\U0001f37d",  # 🍽
-    "welcome_message": "\U0001f37d Welcome to [Business Name]! Order your favourites in seconds.",
+    "welcome_message": _WELCOME_TEXT,
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:order", "title": "\U0001f6d2 Order Now"},
-        {"id": "welcome:menu", "title": "\U0001f4d6 View Menu"},
+        {"id": "welcome:cart", "title": "\U0001f6d2 View Cart"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
         {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
-        {"id": "welcome:contact", "title": "\U0001f4de Contact Restaurant"},
+        {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -68,7 +64,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Paneer Tikka",
-                    "description": "Char-grilled cottage cheese with house spices.",
+                    "description": "Char-grilled cottage cheese with house spices. Veg · Medium spice.",
                     "price": 220,
                     "price_type": "fixed",
                     "images": [_IMG_STARTERS],
@@ -76,7 +72,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Chicken Seekh Kebab",
-                    "description": "Minced chicken skewers, smoky tandoor finish.",
+                    "description": "Minced chicken skewers, smoky tandoor finish. Non-veg · Medium spice.",
                     "price": 260,
                     "price_type": "fixed",
                     "images": [_IMG_STARTERS],
@@ -90,7 +86,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Butter Chicken",
-                    "description": "Slow-cooked chicken in a rich tomato-butter gravy.",
+                    "description": "Slow-cooked chicken in a rich tomato-butter gravy. Non-veg · Mild.",
                     "price": 380,
                     "price_type": "fixed",
                     "images": [_IMG_MAIN_COURSE],
@@ -98,7 +94,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Dal Makhani",
-                    "description": "Slow-simmered black lentils finished with cream.",
+                    "description": "Slow-simmered black lentils finished with cream. Veg · Mild.",
                     "price": 260,
                     "price_type": "fixed",
                     "images": [_IMG_MAIN_COURSE],
@@ -106,7 +102,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Veg Biryani",
-                    "description": "Fragrant basmati rice layered with garden vegetables.",
+                    "description": "Fragrant basmati rice layered with garden vegetables. Veg · Medium spice.",
                     "price": 240,
                     "price_type": "fixed",
                     "images": [_IMG_MAIN_COURSE],
@@ -120,7 +116,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Masala Chaas",
-                    "description": "Spiced buttermilk, served chilled.",
+                    "description": "Spiced buttermilk, served chilled. Veg.",
                     "price": 60,
                     "price_type": "fixed",
                     "images": [_IMG_BEVERAGES],
@@ -128,7 +124,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Fresh Lime Soda",
-                    "description": "Sweet, salted, or mixed -- your choice.",
+                    "description": "Sweet, salted, or mixed -- your choice. Veg.",
                     "price": 80,
                     "price_type": "fixed",
                     "images": [_IMG_BEVERAGES],
@@ -142,7 +138,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Gulab Jamun (2 pcs)",
-                    "description": "Warm milk-solid dumplings in sugar syrup.",
+                    "description": "Warm milk-solid dumplings in sugar syrup. Veg.",
                     "price": 120,
                     "price_type": "fixed",
                     "images": [_IMG_DESSERTS],
@@ -156,21 +152,23 @@ TEMPLATE = {
         {
             "step_id": "welcome",
             "type": "menu_select",
-            "prompt": "\U0001f37d Welcome to {{restaurant_name}}! Order your favourites in seconds.",
+            "prompt": _WELCOME_TEXT,
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:order", "title": "\U0001f6d2 Order Now"},
-                {"id": "welcome:menu", "title": "\U0001f4d6 View Menu"},
+                {"id": "welcome:cart", "title": "\U0001f6d2 View Cart"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
                 {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
-                {"id": "welcome:contact", "title": "\U0001f4de Contact Restaurant"},
+                {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:order": "category_select",
-                "welcome:menu": "category_select",
+                "welcome:cart": "cart_menu",
                 "welcome:offers": "offers_info",
                 "welcome:location": "location_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
@@ -185,17 +183,30 @@ TEMPLATE = {
         {
             "step_id": "location_info",
             "type": "message",
-            "prompt": "\U0001f4cd You'll find {{restaurant_name}} details and directions here -- message us if you need help finding us!",
+            "prompt": (
+                "\U0001f4cd {{business_name}}\n\n[Address will appear here once the business "
+                "adds it in Settings.]\n\nTap \U0001f9d1 Talk to a Human if you'd like directions right now."
+            ),
             "back_target": "welcome",
         },
         {
             "step_id": "contact_info",
             "type": "message",
-            "prompt": "\U0001f4de You can reach {{restaurant_name}} right here on WhatsApp any time.",
+            "prompt": (
+                "\U0001f4de {{business_name}}\n\nPhone: [add your number in Settings]\n"
+                "Hours: [add your hours in Settings]\n\n"
+                "Or tap \U0001f9d1 Talk to a Human from the main menu to chat with our team right now."
+            ),
             "back_target": "welcome",
         },
         {
-            # Step 2: "Order Now"/"View Menu" tapped -> Category list. [Back -> Welcome]
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
+        },
+        {
+            # "Order Now" tapped -> Category list. [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
             "prompt": "What would you like to order from?",
@@ -207,7 +218,7 @@ TEMPLATE = {
             "section_title": "Categories",
         },
         {
-            # Step 3: Category tapped -> Item list (name + price, tap = select).
+            # Category tapped -> Item list (name + price, tap = select).
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
@@ -221,7 +232,7 @@ TEMPLATE = {
             "section_title": "Items",
         },
         {
-            # Step 4: Item tapped -> Quantity buttons (1/2/3/Custom), adds to cart.
+            # Item tapped -> Quantity buttons (1/2/3/Custom), adds to cart.
             # [Back -> Item list]
             "step_id": "quantity_select",
             "type": "quantity_input",
@@ -232,7 +243,8 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 5: Cart menu -- Add More Items / Checkout. [Back -> Category list]
+            # Cart menu -- Add More Items / Checkout. Reachable both from the order chain
+            # and directly from welcome's "View Cart" button. [Back -> Category list]
             "step_id": "cart_menu",
             "type": "menu_select",
             "prompt": "\U0001f6d2 Your cart so far:\n\n{{cart_summary}}\n\nTotal: {{currency}} {{cart_total}}\n\nWhat next?",
@@ -250,7 +262,7 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 6: Delivery address -- free text or native WhatsApp location share,
+            # Delivery address -- free text or native WhatsApp location share,
             # skippable for dine-in/pickup. [Back -> Cart menu]
             "step_id": "address_capture",
             "type": "free_text_input",
@@ -262,7 +274,7 @@ TEMPLATE = {
             "next": "order_confirm",
         },
         {
-            # Step 7: Order confirmation card (items, total, address) -> "Place Order".
+            # Order confirmation card (items, total, address) -> "Place Order".
             # [Back -> delivery address]
             "step_id": "order_confirm",
             "type": "confirm_action",
@@ -281,11 +293,11 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 8: Confirmed -> confirmation + payment link (create_engagement
-            # generates a real Razorpay payment link whenever the cart total is
-            # non-zero -- see app/services/payment/generic_razorpay.py);
-            # notify_business() (called unconditionally inside create_engagement)
-            # notifies staff. Flow complete -- terminal, no Back.
+            # Confirmed -> confirmation + payment link (create_engagement generates a
+            # real Razorpay payment link whenever the cart total is non-zero -- see
+            # app/services/payment/generic_razorpay.py); notify_business() (called
+            # unconditionally inside create_engagement) notifies staff. Flow complete --
+            # terminal, no Back.
             "step_id": "order_confirmed",
             "type": "message",
             "prompt": (
@@ -293,7 +305,7 @@ TEMPLATE = {
                 "Total: {{currency}} {{last_total}}\n"
                 "{{payment_link_url}}\n\n"
                 "We'll start preparing your order right away. Thank you for choosing "
-                "{{restaurant_name}}!"
+                "{{business_name}}!"
             ),
             "back_target": None,
             "terminal": True,
@@ -308,9 +320,8 @@ TEMPLATE = {
             "cancelled": "Cancelled",
         },
         "catalog_label": "Menu",
-        "category_label": "Category",
-        "item_label": "Item",
-        "staff_label": "Staff",
+        "category_label": "Menu Category",
+        "item_label": "Dish",
     },
     "default_modules": {},
 }

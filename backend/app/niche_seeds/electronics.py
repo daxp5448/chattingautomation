@@ -1,8 +1,8 @@
 """Electronics & Mobile Store niche template -- an `action_type="order"` niche (cart +
 quantity + checkout + payment) for the generic conversation engine (see
 app/services/generic_flow_engine.py, whose module docstring and step-shape contract this
-file's `default_flow_steps` implements exactly). This is a re-skin of the proven Restaurant
-template (app/niche_seeds/restaurant.py) -- same flow shape, electronics content.
+file's `default_flow_steps` implements exactly). Shares the Restaurant order-flow shape
+(app/niche_seeds/restaurant.py) -- same flow shape, electronics content.
 
 `TEMPLATE` matches app/models/niche_template.py's column shapes 1:1 -- see
 app/services/niche_provisioning.py for how it's copied into a brand-new business's own
@@ -17,25 +17,19 @@ Order-flow shape (context keys a completed order's Engagement.details carries):
   after every cart mutation -- see generic_flow_engine.py::_Engine._refresh_cart_summary).
 `create_engagement` reads its EngagementType off the FlowDefinition itself (not off any
 step) and sets requires_payment=True automatically whenever the cart is non-empty.
+
+Brand/warranty are carried in each item's `attributes` JSON bag for admin/API use, but
+surfaced to the customer via each item's plain `description` field -- the shared
+engine's `_price_label` `include_attributes` special-case only understands
+`duration_minutes` (a salon-specific concept), so this is the zero-engine-change way to
+make brand/warranty visible in the item list. "Compare products" and "EMI" from the
+product brief are NOT implemented here -- both need a comparison renderer / financing
+data provider the engine doesn't have yet; deferred rather than faked.
 """
 
 from app.niche_seeds._media import demo_image_base
 
 
-_PLACEHOLDER = "https://placehold.co/{size}?text={text}"
-
-
-def _img(size: str, text: str) -> str:
-    return _PLACEHOLDER.format(size=size, text=text.replace(" ", "+").replace("&", "%26"))
-
-
-# Real demo photos (Wikimedia Commons, free-licensed), uploaded to this deployment's own
-# S3/MinIO bucket for a permanent (non-expiring) URL -- see
-# backend/scripts/demo_asset_upload.py. The base URL comes from
-# settings.PUBLIC_MEDIA_BASE_URL (see app/niche_seeds/_media.py) -- defaults to raw
-# MinIO (only reachable from this machine); point it at a publicly-tunnelled URL or a
-# real bucket before testing on a real WhatsApp number (same requirement GOING_LIVE.md
-# documents for the webhook itself), then re-run sync_niche_templates once.
 _DEMO_IMG_BASE = demo_image_base("electronics")
 _IMG_WELCOME = f"{_DEMO_IMG_BASE}/welcome.jpg"
 _IMG_SMARTPHONES = f"{_DEMO_IMG_BASE}/smartphones.jpg"
@@ -43,20 +37,23 @@ _IMG_LAPTOPS = f"{_DEMO_IMG_BASE}/laptops.jpg"
 _IMG_ACCESSORIES = f"{_DEMO_IMG_BASE}/accessories.jpg"
 _IMG_APPLIANCES = f"{_DEMO_IMG_BASE}/appliances.jpg"
 
+_WELCOME_TEXT = "\U0001f4f1 Welcome to {{business_name}}! Shop the latest electronics in seconds."
+
 
 TEMPLATE = {
     "code": "electronics",
     "name": "Electronics & Mobile Store",
     "action_type": "order",
     "icon": "\U0001f4f1",  # 📱
-    "welcome_message": "\U0001f4f1 Welcome to [Business Name]! Shop the latest electronics in seconds.",
+    "welcome_message": _WELCOME_TEXT,
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:shop", "title": "\U0001f6d2 Shop Now"},
-        {"id": "welcome:catalog", "title": "\U0001f4f1 Browse Catalog"},
+        {"id": "welcome:cart", "title": "\U0001f6d2 View Cart"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
         {"id": "welcome:store", "title": "\U0001f3ec Our Store"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -65,7 +62,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Smartphone X100",
-                    "description": "6.7in AMOLED display, 5G, 128GB storage, triple camera.",
+                    "description": "6.7in AMOLED display, 5G, 128GB storage, triple camera. Voltex · 12-month warranty.",
                     "price": 15999,
                     "price_type": "fixed",
                     "images": [_IMG_SMARTPHONES],
@@ -73,7 +70,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Smartphone Lite",
-                    "description": "Budget-friendly 6.1in display, 64GB storage, dual camera.",
+                    "description": "Budget-friendly 6.1in display, 64GB storage, dual camera. Voltex · 12-month warranty.",
                     "price": 9999,
                     "price_type": "fixed",
                     "images": [_IMG_SMARTPHONES],
@@ -87,7 +84,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Laptop Pro 14",
-                    "description": "14in Retina-class display, 16GB RAM, 512GB SSD.",
+                    "description": "14in Retina-class display, 16GB RAM, 512GB SSD. Nexbook · 24-month warranty.",
                     "price": 54999,
                     "price_type": "fixed",
                     "images": [_IMG_LAPTOPS],
@@ -95,7 +92,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Laptop Air 13",
-                    "description": "13in ultralight design, 8GB RAM, 256GB SSD.",
+                    "description": "13in ultralight design, 8GB RAM, 256GB SSD. Nexbook · 24-month warranty.",
                     "price": 42999,
                     "price_type": "fixed",
                     "images": [_IMG_LAPTOPS],
@@ -109,7 +106,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Wireless Earbuds",
-                    "description": "Active noise cancellation, 30hr battery with case.",
+                    "description": "Active noise cancellation, 30hr battery with case. Voltex · 6-month warranty.",
                     "price": 1999,
                     "price_type": "fixed",
                     "images": [_IMG_ACCESSORIES],
@@ -117,7 +114,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Power Bank 10K",
-                    "description": "10000mAh fast-charging power bank, dual USB output.",
+                    "description": "10000mAh fast-charging power bank, dual USB output. Voltex · 6-month warranty.",
                     "price": 899,
                     "price_type": "fixed",
                     "images": [_IMG_ACCESSORIES],
@@ -131,7 +128,7 @@ TEMPLATE = {
             "items": [
                 {
                     "name": "Smart TV 43in",
-                    "description": "43in 4K UHD smart TV with built-in streaming apps.",
+                    "description": "43in 4K UHD smart TV with built-in streaming apps. Nexbook · 12-month warranty.",
                     "price": 22999,
                     "price_type": "fixed",
                     "images": [_IMG_APPLIANCES],
@@ -139,7 +136,7 @@ TEMPLATE = {
                 },
                 {
                     "name": "Air Fryer",
-                    "description": "4L digital air fryer with 8 preset cooking modes.",
+                    "description": "4L digital air fryer with 8 preset cooking modes. Nexbook · 12-month warranty.",
                     "price": 4499,
                     "price_type": "fixed",
                     "images": [_IMG_APPLIANCES],
@@ -153,21 +150,23 @@ TEMPLATE = {
         {
             "step_id": "welcome",
             "type": "menu_select",
-            "prompt": "\U0001f4f1 Welcome to {{restaurant_name}}! Shop the latest electronics in seconds.",
+            "prompt": _WELCOME_TEXT,
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:shop", "title": "\U0001f6d2 Shop Now"},
-                {"id": "welcome:catalog", "title": "\U0001f4f1 Browse Catalog"},
+                {"id": "welcome:cart", "title": "\U0001f6d2 View Cart"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
                 {"id": "welcome:store", "title": "\U0001f3ec Our Store"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Us"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:shop": "category_select",
-                "welcome:catalog": "category_select",
+                "welcome:cart": "cart_menu",
                 "welcome:offers": "offers_info",
                 "welcome:store": "store_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
@@ -182,17 +181,30 @@ TEMPLATE = {
         {
             "step_id": "store_info",
             "type": "message",
-            "prompt": "\U0001f3ec You'll find {{restaurant_name}} details and directions here -- message us if you need help finding us!",
+            "prompt": (
+                "\U0001f3ec {{business_name}}\n\n[Address will appear here once the business "
+                "adds it in Settings.]\n\nTap \U0001f9d1 Talk to a Human if you'd like directions right now."
+            ),
             "back_target": "welcome",
         },
         {
             "step_id": "contact_info",
             "type": "message",
-            "prompt": "\U0001f4de You can reach {{restaurant_name}} right here on WhatsApp any time.",
+            "prompt": (
+                "\U0001f4de {{business_name}}\n\nPhone: [add your number in Settings]\n"
+                "Hours: [add your hours in Settings]\n\n"
+                "Or tap \U0001f9d1 Talk to a Human from the main menu to chat with our team right now."
+            ),
             "back_target": "welcome",
         },
         {
-            # Step 2: "Shop Now"/"Browse Catalog" tapped -> Category list. [Back -> Welcome]
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
+        },
+        {
+            # "Shop Now" tapped -> Category list. [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
             "prompt": "What would you like to shop for?",
@@ -204,7 +216,7 @@ TEMPLATE = {
             "section_title": "Categories",
         },
         {
-            # Step 3: Category tapped -> Item list (name + price, tap = select).
+            # Category tapped -> Item list (name + price, tap = select).
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
@@ -218,7 +230,7 @@ TEMPLATE = {
             "section_title": "Items",
         },
         {
-            # Step 4: Item tapped -> Quantity buttons (1/2/3/Custom), adds to cart.
+            # Item tapped -> Quantity buttons (1/2/3/Custom), adds to cart.
             # [Back -> Item list]
             "step_id": "quantity_select",
             "type": "quantity_input",
@@ -229,7 +241,8 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 5: Cart menu -- Add More Items / Checkout. [Back -> Category list]
+            # Cart menu -- Add More Items / Checkout. Reachable both from the order chain
+            # and directly from welcome's "View Cart" button. [Back -> Category list]
             "step_id": "cart_menu",
             "type": "menu_select",
             "prompt": "\U0001f6d2 Your cart so far:\n\n{{cart_summary}}\n\nTotal: {{currency}} {{cart_total}}\n\nWhat next?",
@@ -247,7 +260,7 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 6: Delivery address -- free text or native WhatsApp location share,
+            # Delivery address -- free text or native WhatsApp location share,
             # skippable for in-store pickup. [Back -> Cart menu]
             "step_id": "address_capture",
             "type": "free_text_input",
@@ -259,7 +272,7 @@ TEMPLATE = {
             "next": "order_confirm",
         },
         {
-            # Step 7: Order confirmation card (items, total, address) -> "Place Order".
+            # Order confirmation card (items, total, address) -> "Place Order".
             # [Back -> delivery address]
             "step_id": "order_confirm",
             "type": "confirm_action",
@@ -278,8 +291,8 @@ TEMPLATE = {
             "show_image": False,
         },
         {
-            # Step 8: Confirmed -> confirmation + payment link (create_engagement
-            # generates a real payment link whenever the cart total is non-zero -- see
+            # Confirmed -> confirmation + payment link (create_engagement generates a
+            # real payment link whenever the cart total is non-zero -- see
             # app/services/payment/generic_razorpay.py); notify_business() (called
             # unconditionally inside create_engagement) notifies staff. Flow complete --
             # terminal, no Back.
@@ -290,7 +303,7 @@ TEMPLATE = {
                 "Total: {{currency}} {{last_total}}\n"
                 "{{payment_link_url}}\n\n"
                 "We'll get your order ready right away. Thank you for shopping with "
-                "{{restaurant_name}}!"
+                "{{business_name}}!"
             ),
             "back_target": None,
             "terminal": True,
@@ -305,9 +318,8 @@ TEMPLATE = {
             "cancelled": "Cancelled",
         },
         "catalog_label": "Catalog",
-        "category_label": "Category",
-        "item_label": "Item",
-        "staff_label": "Staff",
+        "category_label": "Product Category",
+        "item_label": "Product",
     },
     "default_modules": {},
 }

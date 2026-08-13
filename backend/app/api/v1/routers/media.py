@@ -13,7 +13,8 @@ import mimetypes
 
 from fastapi import APIRouter, HTTPException, Response, status
 
-from app.services.image_storage_service import ImageStorageError, download_bytes
+from app.services import image_storage_service
+from app.services.image_storage_service import ImageStorageError
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/media", tags=["media"])
 @router.get("/{key:path}")
 async def get_media(key: str) -> Response:
     try:
-        content = download_bytes(key)
+        content = image_storage_service.download_bytes(key)
     except ImageStorageError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found") from exc
     content_type = mimetypes.guess_type(key)[0] or "application/octet-stream"

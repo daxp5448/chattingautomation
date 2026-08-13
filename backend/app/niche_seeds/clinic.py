@@ -58,10 +58,10 @@ TEMPLATE = {
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:book", "title": "\U0001f4c5 Book Appointment"},
-        {"id": "welcome:services", "title": "\U0001fa7a Our Doctors"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
         {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Clinic"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -120,6 +120,14 @@ TEMPLATE = {
                     "images": [_IMG_DERMATOLOGY],
                     "attributes": {"duration_minutes": 20},
                 },
+                {
+                    "name": "Acne & Scar Treatment",
+                    "description": "Targeted in-clinic treatment session for acne and scarring.",
+                    "price": 1800,
+                    "price_type": "fixed",
+                    "images": [_IMG_DERMATOLOGY],
+                    "attributes": {"duration_minutes": 40},
+                },
             ],
         },
         {
@@ -130,6 +138,14 @@ TEMPLATE = {
                     "name": "Gynec Consultation",
                     "description": "Gynecologist consultation.",
                     "price": 800,
+                    "price_type": "fixed",
+                    "images": [_IMG_GYNECOLOGY],
+                    "attributes": {"duration_minutes": 30},
+                },
+                {
+                    "name": "Pregnancy Checkup",
+                    "description": "Routine prenatal checkup and consultation.",
+                    "price": 1000,
                     "price_type": "fixed",
                     "images": [_IMG_GYNECOLOGY],
                     "attributes": {"duration_minutes": 30},
@@ -173,21 +189,27 @@ TEMPLATE = {
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:book", "title": "\U0001f4c5 Book Appointment"},
-                {"id": "welcome:services", "title": "\U0001fa7a Our Doctors"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
                 {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Clinic"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:book": "category_select",
-                "welcome:services": "category_select",
                 "welcome:offers": "offers_info",
                 "welcome:location": "location_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
             "show_image": True,
+        },
+        {
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
         },
         {
             "step_id": "offers_info",

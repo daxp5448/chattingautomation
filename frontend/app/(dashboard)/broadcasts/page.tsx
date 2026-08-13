@@ -200,7 +200,7 @@ function BroadcastsForRestaurant({ restaurantId }: { restaurantId: string }) {
         <h1 className="text-2xl font-semibold text-slate-900">Broadcasts</h1>
         <p className="mt-1 max-w-2xl text-sm text-slate-500">
           Send an approved WhatsApp template to a segment of your customers. Only customers who opted in to
-          marketing messages are eligible for a Marketing-category template. A daily send cap (set in Restaurant
+          marketing messages are eligible for a Marketing-category template. A daily send cap (set in Business
           settings) protects your WhatsApp number from Meta&apos;s messaging limits.
         </p>
       </div>

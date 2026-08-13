@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.deps import CurrentUser, DbSession, require_roles, resolve_tenant_id
@@ -31,6 +32,7 @@ from app.schemas.order import OrderRead
 from app.schemas.restaurant import (
     DemoBotNicheStatus,
     DemoBotStatus,
+    DemoModeUpdate,
     RestaurantCreate,
     RestaurantCreateResult,
     RestaurantListItem,
@@ -175,10 +177,13 @@ async def create_restaurant(
 @router.get("", response_model=list[RestaurantListItem])
 async def list_restaurants(db: DbSession, user: User = Depends(require_roles(UserRole.SUPER_ADMIN))):
     repo = RestaurantRepository(db)
-    # Demo Bot restaurants (see app/services/demo_bot_service.py) are internal
-    # infrastructure, not real tenants -- excluded here so they never appear in, or skew
-    # counts on, the Super-Admin businesses list.
-    restaurants = await repo.list(is_demo=False)
+    # Demo Bot restaurants (see app/services/demo_bot_service.py) used to be excluded here
+    # entirely -- but that also meant there was no way for a Super Admin to ever open a
+    # demo restaurant's own dashboard/orders/live-chat to see what a real customer sent it
+    # (the /niches page's status panel only ever showed a coarse count, never a restaurant
+    # to click into). Included now, distinguished via `is_demo` on each row (see
+    # RestaurantListItem) so the frontend can badge them instead of hiding them.
+    restaurants = await repo.list()
     order_summary = await OrderRepository(db).summary_by_restaurant()
     return [
         RestaurantListItem(**RestaurantRead.model_validate(r).model_dump(), **order_summary.get(r.id, {}))
@@ -189,14 +194,25 @@ async def list_restaurants(db: DbSession, user: User = Depends(require_roles(Use
 @router.get("/demo-bot-status", response_model=DemoBotStatus)
 async def get_demo_bot_status(db: DbSession, user: User = Depends(require_roles(UserRole.SUPER_ADMIN))):
     """Read-only status for the /niches page's 'Demo Bot' panel -- which niches have a
-    demo restaurant provisioned (app/services/demo_restaurant_sync.py) and whether the
-    one sentinel restaurant that owns the real demo WhatsApp number exists. Registered
+    demo restaurant provisioned (app/services/demo_restaurant_sync.py) and whether any
+    real WhatsApp number is currently able to reach the industry picker. Registered
     before GET /{restaurant_id} so it isn't swallowed by that path parameter.
     """
     templates = await NicheTemplateRepository(db).list_all()
     demo_restaurants = await RestaurantRepository(db).list(is_demo=True)
     demo_niche_codes = {r.niche_type for r in demo_restaurants if r.niche_type}
-    sentinel_configured = any(r.whatsapp_phone_number_id for r in demo_restaurants)
+    # An entry point is "configured" if EITHER the classic sentinel Demo Bot restaurant
+    # (is_demo=True with its own real number) exists, OR at least one real business has
+    # been toggled into Industry Picker Mode (demo_mode_enabled -- see
+    # app/models/restaurant.py) on its own connected number. Without the second check this
+    # panel would wrongly show "not configured" for a setup like Prince Corner's, where the
+    # picker is genuinely live but through demo_mode_enabled rather than is_demo.
+    demo_mode_restaurants = (await db.execute(
+        select(Restaurant).where(Restaurant.demo_mode_enabled.is_(True))
+    )).scalars().all()
+    sentinel_configured = any(r.whatsapp_phone_number_id for r in demo_restaurants) or any(
+        r.whatsapp_phone_number_id for r in demo_mode_restaurants
+    )
     return DemoBotStatus(
         sentinel_configured=sentinel_configured,
         niches=[
@@ -212,7 +228,7 @@ async def get_restaurant(restaurant_id: uuid.UUID, db: DbSession, user: CurrentU
     repo = RestaurantRepository(db)
     restaurant = await repo.get(tenant_id)
     if not restaurant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
     return restaurant
 
 
@@ -228,7 +244,7 @@ async def update_restaurant(
     repo = RestaurantRepository(db)
     restaurant = await repo.get(tenant_id)
     if not restaurant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
 
     old_phone_number_id = restaurant.whatsapp_phone_number_id
 
@@ -301,6 +317,45 @@ async def update_restaurant(
     return restaurant
 
 
+@router.patch("/{restaurant_id}/demo-mode", response_model=RestaurantRead)
+async def update_demo_mode(
+    restaurant_id: uuid.UUID, payload: DemoModeUpdate, db: DbSession, user: User = Depends(require_roles(UserRole.SUPER_ADMIN))
+):
+    """Toggle a REAL business's own WhatsApp number into/out of the Demo Bot's industry
+    picker (see app/models/restaurant.py::demo_mode_enabled and
+    app/services/demo_bot_service.py). Super Admin only, deliberately separate from the
+    general PATCH /{restaurant_id} an Owner can also call -- flipping this pauses real
+    order-taking on that number, not a call an Owner should be able to make on their own
+    restaurant (or, worse, have made for them by a bug in unrelated settings code).
+    """
+    repo = RestaurantRepository(db)
+    restaurant = await repo.get(restaurant_id)
+    if not restaurant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "niche_codes" in updates and updates["niche_codes"]:
+        valid_codes = {t.code for t in await NicheTemplateRepository(db).list_all()}
+        unknown = set(updates["niche_codes"]) - valid_codes
+        if unknown:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown niche code(s): {', '.join(sorted(unknown))}")
+
+    restaurant.demo_mode_enabled = payload.enabled
+    if "niche_codes" in updates:
+        restaurant.demo_enabled_niche_codes = updates["niche_codes"]
+    await repo.commit()
+
+    # Same reasoning as update_restaurant's own status-change cache invalidation just
+    # above: the webhook's phone_number_id -> restaurant lookup is cached for up to 60s,
+    # and demo_mode_enabled lives on that cached row -- without this, toggling Demo Mode
+    # on or off could take up to a minute to actually take effect for real inbound
+    # messages.
+    if restaurant.whatsapp_phone_number_id:
+        invalidate_restaurant_cache(restaurant.whatsapp_phone_number_id)
+
+    return restaurant
+
+
 @router.get("/{restaurant_id}/audit-log", response_model=list[AuditLogRead])
 async def get_audit_log(
     restaurant_id: uuid.UUID, db: DbSession, user: User = Depends(require_roles(UserRole.SUPER_ADMIN))
@@ -320,7 +375,7 @@ async def export_restaurant_data(restaurant_id: uuid.UUID, db: DbSession, user: 
     tenant_id = resolve_tenant_id(user, restaurant_id)
     restaurant = await RestaurantRepository(db).get(tenant_id)
     if not restaurant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
 
     branches = await BranchRepository(db).list(restaurant_id=tenant_id)
     categories = await CategoryRepository(db).list(restaurant_id=tenant_id)

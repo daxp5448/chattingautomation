@@ -46,6 +46,15 @@ class Restaurant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     whatsapp_access_token_encrypted: Mapped[str | None] = mapped_column(String(2000))
     whatsapp_verify_token: Mapped[str | None] = mapped_column(String(200))
 
+    # Native WhatsApp Flow ordering (see the approved "WhatsApp Flows for Ordering" plan) --
+    # both NULL means off, same bias as enabled_features/uses_generic_engine: every
+    # pre-existing restaurant is completely unaffected until an Owner explicitly opts in via
+    # POST .../whatsapp-flow/enable. The private key is per-WABA (Meta's own requirement,
+    # "use a dedicated ... encryption key pair for each WABA"), encrypted at rest the same
+    # way whatsapp_access_token_encrypted already is.
+    whatsapp_flow_order_id: Mapped[str | None] = mapped_column(String(50))
+    whatsapp_flow_private_key_encrypted: Mapped[str | None] = mapped_column(String(4000))
+
     # Payment: which methods this restaurant accepts, and gateway credentials.
     # Generic per-gateway columns (rather than a dedicated Razorpay table) so the next
     # gateway (Stripe/PhonePe/UPI) slots in the same way without schema churn.
@@ -104,6 +113,24 @@ class Restaurant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     demo_sends_via_restaurant_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("restaurants.id", ondelete="SET NULL"), nullable=True
     )
+
+    # --- Demo Mode on a REAL business's own WhatsApp number ---------------------------
+    # Distinct from is_demo above (which marks a restaurant as never having real
+    # customers at all). This lets a Super Admin temporarily repoint an already-live
+    # restaurant's own connected WhatsApp number at the Demo Bot's industry-picker
+    # dispatcher (app/services/demo_bot_service.py) instead of that restaurant's normal
+    # order flow -- see app/api/v1/routers/webhook.py's routing check. Defaults False so
+    # every existing restaurant (Prince Corner included) is completely unaffected until a
+    # Super Admin explicitly flips it on for a live sales demo; flipping it back off
+    # restores normal order-taking instantly, since this is purely a routing flag -- no
+    # data is moved or deleted either direction.
+    demo_mode_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Which NicheTemplate.code values appear in the picker while demo_mode_enabled is on.
+    # NULL means "show every niche that has a demo restaurant provisioned" (the same
+    # behavior the sentinel Demo Bot restaurant has always had) -- only a non-null list
+    # narrows it, so this is additive/opt-in, never a behavior change for the existing
+    # sentinel restaurant.
+    demo_enabled_niche_codes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)
 
     # --- Broadcast Module (app/api/v1/routers/broadcasts.py) --------------------------
     # An admin-set safety cap, not a live query against Meta's real messaging tier (that

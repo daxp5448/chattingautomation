@@ -56,10 +56,10 @@ TEMPLATE = {
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:book", "title": "\U0001f4aa Book a Session"},
-        {"id": "welcome:services", "title": "\U0001f3cb View Classes"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
         {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
         {"id": "welcome:contact", "title": "\U0001f4de Contact Gym"},
+        {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
     ],
     "default_catalog": [
         {
@@ -74,6 +74,14 @@ TEMPLATE = {
                     "images": [_IMG_FREE_TRIAL],
                     "attributes": {"duration_minutes": 60},
                 },
+                {
+                    "name": "Free Group Class Trial",
+                    "description": "One free trial pass to attend any group class of your choice -- Zumba, HIIT or Yoga.",
+                    "price": 0,
+                    "price_type": "free",
+                    "images": [_IMG_FREE_TRIAL],
+                    "attributes": {"duration_minutes": 45},
+                },
             ],
         },
         {
@@ -84,6 +92,14 @@ TEMPLATE = {
                     "name": "Personal Training",
                     "description": "One-on-one session with a personal trainer.",
                     "price": 800,
+                    "price_type": "fixed",
+                    "images": [_IMG_PERSONAL_TRAINING],
+                    "attributes": {"duration_minutes": 60},
+                },
+                {
+                    "name": "Personal Training Package (5 Sessions)",
+                    "description": "Five one-on-one sessions with a personal trainer, including a customized fitness plan.",
+                    "price": 3500,
                     "price_type": "fixed",
                     "images": [_IMG_PERSONAL_TRAINING],
                     "attributes": {"duration_minutes": 60},
@@ -148,21 +164,27 @@ TEMPLATE = {
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:book", "title": "\U0001f4aa Book a Session"},
-                {"id": "welcome:services", "title": "\U0001f3cb View Classes"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
                 {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
                 {"id": "welcome:contact", "title": "\U0001f4de Contact Gym"},
+                {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
                 "welcome:book": "category_select",
-                "welcome:services": "category_select",
                 "welcome:offers": "offers_info",
                 "welcome:location": "location_info",
                 "welcome:contact": "contact_info",
+                "welcome:human": "human_handoff",
             },
             "next": "category_select",
             "back_target": None,
             "show_image": True,
+        },
+        {
+            "step_id": "human_handoff",
+            "type": "human_handoff",
+            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "back_target": "welcome",
         },
         {
             "step_id": "offers_info",

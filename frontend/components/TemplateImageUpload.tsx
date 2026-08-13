@@ -14,9 +14,14 @@ interface Props {
   label: string;
   value: string;
   onChange: (url: string) => void;
+  // Any endpoint that accepts a multipart "file" field and returns { url }. Defaults to
+  // the niche-templates one (this component's original use); catalog category icons
+  // point at /restaurants/{id}/catalog-categories/upload-image instead -- same
+  // permanent-URL contract, different auth scope (Owner/Manager vs Super Admin).
+  endpoint?: string;
 }
 
-export function TemplateImageUpload({ label, value, onChange }: Props) {
+export function TemplateImageUpload({ label, value, onChange, endpoint = "/niche-templates/upload-image" }: Props) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -27,7 +32,7 @@ export function TemplateImageUpload({ label, value, onChange }: Props) {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const { url } = await apiFetch<{ url: string }>("/niche-templates/upload-image", {
+      const { url } = await apiFetch<{ url: string }>(endpoint, {
         method: "POST",
         body: formData,
       });

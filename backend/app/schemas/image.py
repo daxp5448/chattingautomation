@@ -30,11 +30,46 @@ class ImageRead(BaseModel):
     low_quality_reason: str | None
     replaced_by_image_id: uuid.UUID | None
     variants: dict[str, ImageVariant]
+    caption: str | None
+    alt_text: str | None
+    display_order: int
+    is_active: bool
     created_at: datetime
     updated_at: datetime
     # Populated by the router (not a model column) -- presigned URLs for the original and
     # each ready variant, since the frontend never talks to S3/MinIO directly.
     urls: dict[str, str] = Field(default_factory=dict)
+
+
+class CatalogItemRef(BaseModel):
+    """The small slice of the owning CatalogItem a Media Library row needs to show
+    "used by: <item name>" and link back to it -- not the full CatalogItem schema."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    category_id: uuid.UUID
+
+
+class ImageLibraryEntry(ImageRead):
+    """ImageRead plus the owning catalog item's identity -- used only by
+    GET /restaurants/{restaurant_id}/images/library (the restaurant-wide browse/search
+    endpoint). None when the image has no resolvable owner (shouldn't happen today, since
+    catalog_item_id is currently the only, required owner column, but the outer join this
+    is sourced from doesn't assume that)."""
+
+    catalog_item: CatalogItemRef | None = None
+
+
+class ImageMetadataUpdate(BaseModel):
+    """Body for PATCH /restaurants/{id}/images/{image_id} -- metadata-only edit (no
+    re-upload, no reprocessing). See app/models/image.py for what each field controls."""
+
+    caption: str | None = None
+    alt_text: str | None = None
+    display_order: int | None = None
+    is_active: bool | None = None
 
 
 class ImageCropRequest(BaseModel):

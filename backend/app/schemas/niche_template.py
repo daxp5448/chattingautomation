@@ -17,6 +17,21 @@ class NicheTemplateSummary(BaseModel):
     icon: str | None
 
 
+class NicheCatalogItem(BaseModel):
+    name: str
+    description: str | None = None
+    price: float | None = None
+    price_type: str = "fixed"
+    images: list[str] = []
+    attributes: dict[str, Any] = {}
+
+
+class NicheCatalogCategory(BaseModel):
+    name: str
+    icon_image: str | None = None
+    items: list[NicheCatalogItem] = []
+
+
 class NicheTemplateBase(BaseModel):
     name: str
     action_type: EngagementType
@@ -27,7 +42,11 @@ class NicheTemplateBase(BaseModel):
     # (niche_provisioning.py never reads it; only default_flow_steps[entry_step_id]
     # .static_options drives a provisioned business's actual buttons). Editing it would
     # silently edit the wrong copy. See the approved plan's design-review findings.
-    default_catalog: list[dict[str, Any]] = []
+    # Shape mirrors exactly what niche_provisioning.py reads (name/icon_image/items, each
+    # item's name/description/price/price_type/images/attributes) -- validated here so a
+    # malformed save is rejected immediately instead of KeyError-ing much later when a
+    # real business is provisioned from this template.
+    default_catalog: list[NicheCatalogCategory] = []
     default_flow_steps: list[dict[str, Any]] = []
     # Visual-builder node positions for default_flow_steps -- see
     # FlowDefinition.ui_layout's docstring for why this is separate from the steps above.
@@ -46,7 +65,7 @@ class NicheTemplateUpdate(BaseModel):
     icon: str | None = None
     welcome_message: str | None = None
     welcome_banner_image: str | None = None
-    default_catalog: list[dict[str, Any]] | None = None
+    default_catalog: list[NicheCatalogCategory] | None = None
     default_flow_steps: list[dict[str, Any]] | None = None
     default_ui_layout: dict[str, Any] | None = None
     terminology: dict[str, Any] | None = None
