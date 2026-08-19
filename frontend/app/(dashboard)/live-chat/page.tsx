@@ -5,6 +5,7 @@ import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import { useLiveSocket } from "@/lib/useLiveSocket";
 import type { ConversationSummary, Message, Restaurant } from "@/lib/types";
+import { IconMessageCircle, IconCheckCircle, IconSparkles } from "@/components/icons";
 
 // --- Legacy engine: bot-couldn't-answer handoff (unchanged since Phase 1) ----------
 
@@ -92,13 +93,16 @@ function LegacyLiveChat({ restaurantId, canReply }: { restaurantId: string; canR
                 selected === c.customer_id ? "border-primary bg-primary/5" : "border-slate-200 bg-white hover:bg-slate-50"
               }`}
             >
-              <p className="font-medium text-slate-800">💬 {c.customer_name || c.customer_phone}</p>
+              <p className="flex items-center gap-1.5 font-medium text-slate-800">
+                <IconMessageCircle size={13} className="text-slate-400" /> {c.customer_name || c.customer_phone}
+              </p>
               <p className="truncate text-xs text-slate-400">{c.last_message_preview}</p>
             </button>
           ))}
           {conversations.length === 0 && (
-            <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">
-              No conversations waiting — nice work! 🎉
+            <p className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">
+              <IconSparkles size={16} className="text-slate-300" />
+              No conversations waiting — nice work!
             </p>
           )}
         </div>
@@ -110,8 +114,8 @@ function LegacyLiveChat({ restaurantId, canReply }: { restaurantId: string; canR
             <div className="flex h-full flex-col">
               <div className="mb-3 flex items-center justify-between border-b border-slate-100 pb-3">
                 <p className="text-sm font-semibold text-slate-800">Transcript</p>
-                <button onClick={resolve} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                  ✓ Resolve (back to bot)
+                <button onClick={resolve} className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                  <IconCheckCircle size={13} /> Resolve (back to bot)
                 </button>
               </div>
               <div className="mb-3 max-h-96 space-y-2 overflow-y-auto rounded-lg bg-slate-50 p-3">
@@ -248,13 +252,16 @@ function GenericLiveChat({ restaurantId, canReply }: { restaurantId: string; can
                 selected === c.customer_id ? "border-primary bg-primary/5" : "border-slate-200 bg-white hover:bg-slate-50"
               }`}
             >
-              <p className="font-medium text-slate-800">💬 {c.customer_name || c.customer_phone}</p>
+              <p className="flex items-center gap-1.5 font-medium text-slate-800">
+                <IconMessageCircle size={13} className="text-slate-400" /> {c.customer_name || c.customer_phone}
+              </p>
               <p className="truncate text-xs text-slate-400">{c.last_message_preview}</p>
             </button>
           ))}
           {conversations.length === 0 && (
-            <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">
-              No conversations waiting — nice work! 🎉
+            <p className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">
+              <IconSparkles size={16} className="text-slate-300" />
+              No conversations waiting — nice work!
             </p>
           )}
         </div>
@@ -266,8 +273,8 @@ function GenericLiveChat({ restaurantId, canReply }: { restaurantId: string; can
             <div className="flex h-full flex-col">
               <div className="mb-3 flex items-center justify-between border-b border-slate-100 pb-3">
                 <p className="text-sm font-semibold text-slate-800">Transcript</p>
-                <button onClick={resume} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                  ✓ Resume automation
+                <button onClick={resume} className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                  <IconCheckCircle size={13} /> Resume automation
                 </button>
               </div>
               <div className="mb-3 max-h-96 space-y-2 overflow-y-auto rounded-lg bg-slate-50 p-3">

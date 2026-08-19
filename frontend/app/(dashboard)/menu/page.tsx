@@ -5,6 +5,7 @@ import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import { GenericCatalogEditor } from "@/components/GenericCatalogEditor";
 import type { Category, Product, Restaurant } from "@/lib/types";
+import { IconFolder, IconPackage, IconStar } from "@/components/icons";
 
 function MenuForRestaurant({ restaurantId }: { restaurantId: string }) {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -150,7 +151,7 @@ function MenuForRestaurant({ restaurantId }: { restaurantId: string }) {
 
       <section className="space-y-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-          <span>📂</span> Categories
+          <IconFolder size={15} /> Categories
         </h2>
         <form onSubmit={handleCreateCategory} className="flex items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div>
@@ -182,7 +183,7 @@ function MenuForRestaurant({ restaurantId }: { restaurantId: string }) {
 
       <section className="space-y-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-          <span>🍽️</span> Products
+          <IconPackage size={15} /> Products
         </h2>
         <form onSubmit={handleCreateProduct} className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div>
@@ -233,8 +234,14 @@ function MenuForRestaurant({ restaurantId }: { restaurantId: string }) {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${p.is_featured ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
-                      {p.is_featured ? "⭐ Special" : "-"}
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${p.is_featured ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
+                      {p.is_featured ? (
+                        <>
+                          <IconStar size={11} /> Special
+                        </>
+                      ) : (
+                        "-"
+                      )}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">

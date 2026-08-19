@@ -43,6 +43,67 @@ class ImageRepository(BaseRepository[Image]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_for_catalog_category(self, catalog_category_id: uuid.UUID, restaurant_id: uuid.UUID) -> list[Image]:
+        stmt = (
+            select(Image)
+            .where(
+                Image.catalog_category_id == catalog_category_id,
+                Image.restaurant_id == restaurant_id,
+                Image.deleted_at.is_(None),
+            )
+            .order_by(Image.display_order, Image.created_at)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_for_catalog_categories(self, catalog_category_ids: list[uuid.UUID], restaurant_id: uuid.UUID) -> list[Image]:
+        # Batched sibling of list_for_catalog_category -- mirrors list_for_catalog_items,
+        # used by image_presenter.py::resolve_category_images_bulk so a "Categories" step
+        # with many categories issues one query, not one per category.
+        if not catalog_category_ids:
+            return []
+        stmt = (
+            select(Image)
+            .where(
+                Image.catalog_category_id.in_(catalog_category_ids),
+                Image.restaurant_id == restaurant_id,
+                Image.deleted_at.is_(None),
+            )
+            .order_by(Image.display_order, Image.created_at)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_for_flow_step(self, flow_definition_id: uuid.UUID, flow_step_id: str, restaurant_id: uuid.UUID) -> list[Image]:
+        stmt = (
+            select(Image)
+            .where(
+                Image.flow_definition_id == flow_definition_id,
+                Image.flow_step_id == flow_step_id,
+                Image.restaurant_id == restaurant_id,
+                Image.deleted_at.is_(None),
+            )
+            .order_by(Image.display_order, Image.created_at)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_for_flow_definition(self, flow_definition_id: uuid.UUID, restaurant_id: uuid.UUID) -> list[Image]:
+        # Batched variant of list_for_flow_step -- one query for every step-image in a
+        # whole flow, used by image_presenter.py::resolve_step_images_bulk (renders a
+        # step's images while previewing/editing the flow without one query per step).
+        stmt = (
+            select(Image)
+            .where(
+                Image.flow_definition_id == flow_definition_id,
+                Image.restaurant_id == restaurant_id,
+                Image.deleted_at.is_(None),
+            )
+            .order_by(Image.display_order, Image.created_at)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def list_for_restaurant(
         self,
         restaurant_id: uuid.UUID,

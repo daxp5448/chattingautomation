@@ -27,7 +27,7 @@ def _credentials(restaurant: Restaurant) -> tuple[str, str, str]:
     phone_number_id = restaurant.whatsapp_phone_number_id or ""
     access_token = decrypt_secret(restaurant.whatsapp_access_token_encrypted or "")
     if not waba_id or not phone_number_id or not access_token:
-        raise ValueError("WhatsApp Business Account is not configured for this restaurant")
+        raise ValueError("WhatsApp Business Account is not configured for this business")
     return waba_id, phone_number_id, access_token
 
 

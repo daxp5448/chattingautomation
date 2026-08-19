@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiFetch } from "@/lib/api";
+import { ImageManager, ownerQueryString } from "@/components/ImageManager";
+import type { ImageRecord } from "@/lib/types";
+import { IconX } from "@/components/icons";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -117,7 +121,7 @@ function StepNode({ data, selected }: NodeProps) {
   const showNext = !HAS_NO_NEXT.includes(step.type);
 
   return (
-    <div className={`w-56 rounded-lg border-2 px-3 py-2 shadow-sm ${color} ${selected ? "ring-2 ring-primary" : ""}`}>
+    <div className={`w-56 rounded-xl border-2 px-3 py-2.5 shadow-soft transition-shadow ${color} ${selected ? "shadow-panel ring-2 ring-primary ring-offset-2" : ""}`}>
       <Handle type="target" position={Position.Top} id="in" className="!h-2 !w-2 !bg-slate-400" />
       <div className="flex items-center justify-between gap-2">
         <span className="truncate font-mono text-xs font-semibold text-slate-700">{step.step_id}</span>
@@ -199,14 +203,55 @@ function stepsToEdges(steps: FlowStep[]): Edge[] {
 
 // --- Property panel --------------------------------------------------------------------
 
+// Curated images attached directly to this step (see backend/app/models/image.py's
+// flow_definition_id/flow_step_id owner shape and generic_flow_engine.py::_step_gallery)
+// -- distinct from an item/category's own images, which a menu_select step only shows
+// indirectly via buttons_from. Only rendered when editing a real business's live
+// FlowDefinition (restaurantId+flowDefinitionId both set) -- a niche TEMPLATE's
+// default_flow_steps has no restaurant/FlowDefinition row to attach an Image against yet.
+function StepImagesEditor({ restaurantId, flowDefinitionId, stepId }: { restaurantId: string; flowDefinitionId: string; stepId: string }) {
+  const [images, setImages] = useState<ImageRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    apiFetch<ImageRecord[]>(`/restaurants/${restaurantId}/images?${ownerQueryString({ flowDefinitionId, stepId })}`)
+      .then((rows) => { if (!cancelled) setImages(rows); })
+      .catch(() => { if (!cancelled) setImages([]); }) // e.g. a brand-new step not saved yet
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [restaurantId, flowDefinitionId, stepId]);
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-500">Images shown on this step</label>
+      <p className="mb-1 text-[10px] text-slate-400">Save the flow once after adding a new step before attaching images to it.</p>
+      {loading ? (
+        <p className="text-xs text-slate-400">Loading...</p>
+      ) : (
+        <ImageManager
+          restaurantId={restaurantId}
+          imageType="gallery"
+          owner={{ flowDefinitionId, stepId }}
+          images={images}
+          onChange={setImages}
+        />
+      )}
+    </div>
+  );
+}
+
 function StepPropertyPanel({
-  step, allStepIds, apiEndpoints, onChange, onDelete,
+  step, allStepIds, apiEndpoints, onChange, onDelete, restaurantId, flowDefinitionId,
 }: {
   step: FlowStep;
   allStepIds: string[];
   apiEndpoints: ApiEndpoint[];
   onChange: (next: FlowStep) => void;
   onDelete: () => void;
+  restaurantId?: string;
+  flowDefinitionId?: string;
 }) {
   const otherStepIds = allStepIds.filter((id) => id !== step.step_id);
 
@@ -262,13 +307,13 @@ function StepPropertyPanel({
   }
 
   return (
-    <div className="w-80 shrink-0 space-y-3 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between">
+    <div className="w-80 shrink-0 space-y-3 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
         <div>
           <p className="font-mono text-sm font-semibold text-slate-800">{step.step_id}</p>
           <p className="text-xs uppercase tracking-wide text-slate-400">{step.type}</p>
         </div>
-        <button onClick={onDelete} className="text-xs font-medium text-red-600 hover:text-red-700">Delete step</button>
+        <button onClick={onDelete} className="rounded-md px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50">Delete step</button>
       </div>
 
       {(step.type === "message" || step.type === "menu_select" || step.type === "quantity_input" || step.type === "free_text_input" || step.type === "confirm_action") && (
@@ -283,6 +328,11 @@ function StepPropertyPanel({
           <label className="block text-xs font-medium text-slate-500">Handoff message</label>
           <textarea rows={3} value={(step.message as string) || ""} onChange={(e) => set({ message: e.target.value })} className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs" />
         </div>
+      )}
+
+      {restaurantId && flowDefinitionId &&
+        (step.type === "message" || step.type === "menu_select" || step.type === "quantity_input" || step.type === "confirm_action") && (
+        <StepImagesEditor restaurantId={restaurantId} flowDefinitionId={flowDefinitionId} stepId={step.step_id} />
       )}
 
       {step.type === "free_text_input" && (
@@ -323,8 +373,8 @@ function StepPropertyPanel({
                     delete routes[opt.id];
                     set({ static_options: options, routes });
                   }}
-                  className="text-[10px] font-medium text-red-500"
-                >✕</button>
+                  className="text-red-500"
+                ><IconX size={11} strokeWidth={2} /></button>
               </div>
             ))}
             <button
@@ -449,6 +499,12 @@ export interface FlowGraphEditorProps {
   saving: boolean;
   error: string | null;
   onSave: (steps: FlowStep[], entryStepId: string, uiLayout: Record<string, { x: number; y: number }>) => void;
+  // Set only when editing a real business's live FlowDefinition (Flow Builder) -- left
+  // undefined when editing a NicheTemplate's default_flow_steps (Niches page), which has
+  // no restaurant/FlowDefinition row yet to attach a step image against. See
+  // StepImagesEditor above for what this gates.
+  restaurantId?: string;
+  flowDefinitionId?: string;
 }
 
 function autoPosition(index: number): { x: number; y: number } {
@@ -457,7 +513,7 @@ function autoPosition(index: number): { x: number; y: number } {
   return { x: 60 + col * 280, y: 60 + row * 160 };
 }
 
-function FlowGraphEditorInner({ steps, entryStepId, uiLayout, apiEndpoints, saving, error, onSave }: FlowGraphEditorProps) {
+function FlowGraphEditorInner({ steps, entryStepId, uiLayout, apiEndpoints, saving, error, onSave, restaurantId, flowDefinitionId }: FlowGraphEditorProps) {
   const [localSteps, setLocalSteps] = useState<FlowStep[]>(steps);
   const [localEntryStepId, setLocalEntryStepId] = useState(entryStepId);
   const [localLayout, setLocalLayout] = useState(uiLayout);
@@ -564,16 +620,16 @@ function FlowGraphEditorInner({ steps, entryStepId, uiLayout, apiEndpoints, savi
 
   return (
     <div className="space-y-3">
-      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-      {formError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>}
+      {error && <p className="rounded-lg border border-red-100 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">{error}</p>}
+      {formError && <p className="rounded-lg border border-red-100 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">{formError}</p>}
 
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-card">
         <div>
           <label className="block text-xs font-medium text-slate-500">Entry step</label>
           <select
             value={localEntryStepId}
             onChange={(e) => setLocalEntryStepId(e.target.value)}
-            className="rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+            className="rounded-md border border-slate-200 px-2 py-1.5 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           >
             {menuSelectStepIds.length === 0 && <option value={localEntryStepId}>{localEntryStepId}</option>}
             {menuSelectStepIds.map((id) => <option key={id} value={id}>{id}</option>)}
@@ -582,20 +638,20 @@ function FlowGraphEditorInner({ steps, entryStepId, uiLayout, apiEndpoints, savi
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500">New step ID</label>
-          <input value={newStepId} onChange={(e) => setNewStepId(e.target.value)} placeholder="e.g. ask_size" className="w-40 rounded-md border border-slate-300 px-2 py-1.5 text-xs" />
+          <input value={newStepId} onChange={(e) => setNewStepId(e.target.value)} placeholder="e.g. ask_size" className="w-40 rounded-md border border-slate-200 px-2 py-1.5 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500">Type</label>
-          <select value={newStepType} onChange={(e) => setNewStepType(e.target.value as FlowStepType)} className="rounded-md border border-slate-300 px-2 py-1.5 text-xs">
+          <select value={newStepType} onChange={(e) => setNewStepType(e.target.value as FlowStepType)} className="rounded-md border border-slate-200 px-2 py-1.5 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">
             {STEP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
-        <button onClick={addStep} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">+ Add step</button>
+        <button onClick={addStep} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-soft transition-colors hover:border-primary/30 hover:text-primary-dark">+ Add step</button>
         <div className="ml-auto">
           <button
             onClick={() => onSave(localSteps, localEntryStepId, localLayout)}
             disabled={saving}
-            className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-white shadow-sm disabled:opacity-60"
+            className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white shadow-soft transition-colors hover:bg-primary-dark disabled:opacity-60"
           >
             {saving ? "Saving..." : "Save flow"}
           </button>
@@ -603,7 +659,7 @@ function FlowGraphEditorInner({ steps, entryStepId, uiLayout, apiEndpoints, savi
       </div>
 
       <div className="flex gap-3">
-        <div className="h-[600px] flex-1 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
+        <div className="h-[600px] flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/60 shadow-card">
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -624,6 +680,8 @@ function FlowGraphEditorInner({ steps, entryStepId, uiLayout, apiEndpoints, savi
             apiEndpoints={apiEndpoints}
             onChange={(next) => updateStep(selectedStep.step_id, next)}
             onDelete={() => deleteStep(selectedStep.step_id)}
+            restaurantId={restaurantId}
+            flowDefinitionId={flowDefinitionId}
           />
         )}
       </div>

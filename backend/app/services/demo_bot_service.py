@@ -16,17 +16,24 @@ of its own.
 """
 
 import logging
+import re
 
 from sqlalchemy import select
 
 from app.models.demo_session import DemoSession
 from app.models.enums import MessageDirection, MessageSender
 from app.models.message import Message
+from app.models.niche_template import NicheTemplate
 from app.models.restaurant import Restaurant
 from app.repositories.customer_repository import CustomerRepository
 from app.repositories.demo_session_repository import DemoSessionRepository
 from app.repositories.niche_template_repository import NicheTemplateRepository
-from app.services.generic_flow_engine import GenericInteraction, process_inbound_message, send_generic_message
+from app.services.generic_flow_engine import (
+    GenericInteraction,
+    process_inbound_message,
+    send_generic_message,
+    send_generic_messages_batch,
+)
 from app.services.whatsapp_client import OutboundMessage, WhatsAppSender
 
 logger = logging.getLogger(__name__)
@@ -63,65 +70,99 @@ async def _log_inbound(session, sentinel_restaurant: Restaurant, customer_id, fr
     await session.flush()
 
 
-# Meta caps a WhatsApp interactive list at 10 rows TOTAL (not per section) -- the
-# platform already has 12+ niches, so a single list message would silently drop some of
-# them past the 10th (alphabetically, by NicheTemplateRepository.list_all()'s own
-# ordering) with no error and no indication anything was cut off. Caught by
-# test_demo_bot.py's own picker test failing once a >10th-alphabetically niche ("Retail &
-# Fashion") became unreachable. Fixed by paging: send as many list messages as needed, in
-# a fixed order, so nothing is ever silently unreachable.
-_MAX_LIST_ROWS = 10
+async def _active_niche_templates(session, sentinel_restaurant: Restaurant) -> list[NicheTemplate]:
+    """The filtered, ordered niche list both _send_industry_picker (what a customer is
+    shown, numbered) and _resolve_free_text_pick (what a numeric reply resolves against)
+    must agree on -- shared here so the Nth item shown is always the Nth item a reply of
+    "N" picks. demo_enabled_niche_codes narrows the picker to a Super Admin's own selection
+    (see app/models/restaurant.py -- used both by demo-mode-toggled real businesses like
+    Prince Corner and, in principle, the sentinel Demo Bot restaurant itself). None means
+    "no restriction configured" -- every niche with a synced template shows.
+    """
+    templates = await NicheTemplateRepository(session).list_all()
+    enabled_codes = sentinel_restaurant.demo_enabled_niche_codes
+    if enabled_codes is not None:
+        templates = [t for t in templates if t.code in set(enabled_codes)]
+    return templates
 
 
-async def _send_welcome_banner(session, sender: WhatsAppSender, sentinel_restaurant: Restaurant, customer_id, from_phone: str) -> None:
+def _resolve_free_text_pick(templates: list[NicheTemplate], text: str) -> str | None:
+    """Meta caps a WhatsApp interactive list at 10 rows TOTAL (not per section), and the
+    platform already has 12+ niches -- a tap-to-select list would either silently drop
+    niches past the 10th or force paging across multiple messages (both tried before, both
+    rejected: see git history). _send_industry_picker instead sends every niche as one
+    plain numbered text message, so picking one has to work via free-text reply: a bare
+    number ("3"), or the niche's own name/code, matched case-insensitively.
+
+    Deliberately word-boundary-prefix matching ("jewel" -> a word in "Jewellers" starts
+    with it), NEVER a bare substring-anywhere search -- a naive `"hi" in name.lower()`
+    check once matched the plain greeting "hi" against "Education & Coa*chi*ng" and
+    silently hijacked every ordinary "hi" into auto-picking that niche instead of ever
+    showing the picker. The len>=3 floor is extra insurance against short common words
+    (greetings, "ok", "no") ever resolving to a pick by accident.
+    """
+    text = text.strip()
+    if not text:
+        return None
+    if text.isdigit():
+        idx = int(text)
+        return templates[idx - 1].code if 1 <= idx <= len(templates) else None
+    text_lower = text.lower()
+    for t in templates:
+        if text_lower == t.name.lower() or text_lower == t.code.lower():
+            return t.code
+    if len(text_lower) < 3:
+        return None
+    for t in templates:
+        words = [w for w in re.split(r"[^a-z0-9]+", t.name.lower()) if w]
+        if any(w.startswith(text_lower) for w in words):
+            return t.code
+    return None
+
+
+def _welcome_banner_messages(sentinel_restaurant: Restaurant, from_phone: str) -> list[OutboundMessage]:
     """KelvionTech branding shown before the industry picker -- deliberately read from the
     sentinel restaurant's existing logo_url/cover_image_url fields (same ones editable on
     its own Settings page) rather than hardcoded here, so changing the demo's branding is
     an admin-panel edit, not a code deploy. Either/both being unset (e.g. before an admin
     has configured them) just skips that image -- never blocks the picker from showing.
+    Returns the messages to send rather than sending them itself, so the caller can batch
+    them together with the picker text via send_generic_messages_batch, which guarantees
+    every image here arrives before the text (sequential dispatch, not concurrent -- see
+    that function's own docstring for why).
     """
+    messages = []
     if sentinel_restaurant.logo_url:
-        await send_generic_message(
-            session, sender, sentinel_restaurant, customer_id, from_phone,
-            OutboundMessage.image(from_phone, sentinel_restaurant.logo_url, "👋 Welcome to KelvionTech!"),
-        )
+        messages.append(OutboundMessage.image(from_phone, sentinel_restaurant.logo_url, "👋 Welcome to KelvionTech!"))
     if sentinel_restaurant.cover_image_url:
-        await send_generic_message(
-            session, sender, sentinel_restaurant, customer_id, from_phone,
-            OutboundMessage.image(
-                from_phone, sentinel_restaurant.cover_image_url,
-                "One WhatsApp Business OS, any industry -- pick one below for a live walkthrough of its bot 👇",
-            ),
-        )
+        messages.append(OutboundMessage.image(
+            from_phone, sentinel_restaurant.cover_image_url,
+            "One WhatsApp Business OS, any industry -- pick yours below to get started 👇",
+        ))
+    return messages
 
 
 async def _send_industry_picker(session, sender: WhatsAppSender, sentinel_restaurant: Restaurant, customer_id, from_phone: str) -> None:
-    await _send_welcome_banner(session, sender, sentinel_restaurant, customer_id, from_phone)
-    templates = await NicheTemplateRepository(session).list_all()
-    # demo_enabled_niche_codes narrows the picker to a Super Admin's own selection (see
-    # app/models/restaurant.py -- used both by demo-mode-toggled real businesses like
-    # Prince Corner and, in principle, the sentinel Demo Bot restaurant itself). None
-    # means "no restriction configured" -- every niche with a synced template still shows,
-    # the same behavior this had before the field existed.
-    enabled_codes = sentinel_restaurant.demo_enabled_niche_codes
-    if enabled_codes is not None:
-        templates = [t for t in templates if t.code in set(enabled_codes)]
+    banner_messages = _welcome_banner_messages(sentinel_restaurant, from_phone)
+    templates = await _active_niche_templates(session, sentinel_restaurant)
     if not templates:
-        await send_generic_message(
+        await send_generic_messages_batch(
             session, sender, sentinel_restaurant, customer_id, from_phone,
-            OutboundMessage.text(from_phone, "No industries are configured yet -- please check back soon."),
+            [*banner_messages, OutboundMessage.text(from_phone, "No industries are configured yet -- please check back soon.")],
         )
         return
-    rows = [{"id": f"{_PICK_PREFIX}{t.code}", "title": f"{t.icon + ' ' if t.icon else ''}{t.name}"[:24]} for t in templates]
-    pages = [rows[i:i + _MAX_LIST_ROWS] for i in range(0, len(rows), _MAX_LIST_ROWS)]
-    for page_num, page_rows in enumerate(pages, start=1):
-        body = "👋 Welcome to the KelvionTech Business OS! Pick an industry for a live walkthrough of its WhatsApp bot:"
-        if len(pages) > 1:
-            body += f" (page {page_num}/{len(pages)})"
-        await send_generic_message(
-            session, sender, sentinel_restaurant, customer_id, from_phone,
-            OutboundMessage.interactive_list(from_phone, body, "Select", page_rows, "Industries"),
-        )
+    # One plain-text message, every niche in it -- see _resolve_free_text_pick's docstring
+    # for why this isn't a tap-to-select interactive list (Meta's 10-row cap).
+    lines = [f"{i}. {t.icon + ' ' if t.icon else ''}{t.name}" for i, t in enumerate(templates, start=1)]
+    body = (
+        "👋 *Welcome to the KelvionTech Business OS!*\n"
+        "Reply with a *number* to explore that industry's WhatsApp bot:\n\n"
+        + "\n".join(lines)
+    )
+    await send_generic_messages_batch(
+        session, sender, sentinel_restaurant, customer_id, from_phone,
+        [*banner_messages, OutboundMessage.text(from_phone, body)],
+    )
 
 
 async def _get_demo_restaurant_by_niche(session, niche_code: str) -> Restaurant | None:
@@ -147,7 +188,16 @@ async def handle_demo_inbound(
     reply_id = interaction.reply_id or ""
     text_norm = (interaction.text or "").strip().lower()
     is_leave_signal = reply_id == _MENU_REPLY_ID or text_norm in _LEAVE_TO_PICKER_WORDS
-    is_pick = reply_id.startswith(_PICK_PREFIX)
+    is_button_pick = reply_id.startswith(_PICK_PREFIX)
+    # Free-text pick ("3", "Jewellery") only makes sense while no niche is active yet and
+    # the message isn't itself a leave-signal word -- never attempted mid-niche (that
+    # branch is further below, untouched) so ordinary conversation text inside a niche
+    # (e.g. answering "3" to "how many would you like?") is never misread as a re-pick.
+    text_pick_code: str | None = None
+    if demo_session.active_restaurant_id is None and not is_leave_signal and not is_button_pick:
+        active_templates = await _active_niche_templates(session, sentinel_restaurant)
+        text_pick_code = _resolve_free_text_pick(active_templates, interaction.text or "")
+    is_pick = is_button_pick or text_pick_code is not None
 
     if demo_session.active_restaurant_id is None or is_leave_signal or is_pick:
         # None of these three branches ever delegates the REAL wa_message_id into
@@ -160,10 +210,10 @@ async def handle_demo_inbound(
         await _log_inbound(session, sentinel_restaurant, sentinel_customer.id, from_phone, interaction, wa_message_id)
 
         if is_pick:
-            niche_code = reply_id.removeprefix(_PICK_PREFIX)
+            niche_code = reply_id.removeprefix(_PICK_PREFIX) if is_button_pick else text_pick_code
             demo_restaurant = await _get_demo_restaurant_by_niche(session, niche_code)
             if demo_restaurant is None:
-                logger.warning("Demo Bot: unknown/stale niche code in pick reply_id=%s", reply_id)
+                logger.warning("Demo Bot: unknown/stale niche code in pick niche_code=%s", niche_code)
                 await _send_industry_picker(session, sender, sentinel_restaurant, sentinel_customer.id, from_phone)
                 await session.commit()
                 return
@@ -198,8 +248,7 @@ async def handle_demo_inbound(
                 session, sender, sentinel_restaurant, sentinel_customer.id, from_phone,
                 OutboundMessage.text(
                     from_phone,
-                    f"🌐 Starting the *{display_name}* walkthrough — no real order or payment is ever created "
-                    "here. Type *menu* anytime to try another industry.",
+                    f"🌐 Welcome to *{display_name}*! Type *menu* anytime to explore another industry.",
                 ),
             )
             await session.commit()

@@ -21,6 +21,7 @@ from app.models.generic_conversation_state import GenericConversationState
 from app.models.message import Message
 from app.models.niche_template import NicheTemplate
 from app.models.restaurant import Restaurant
+from app.repositories.niche_template_repository import NicheTemplateRepository
 from app.services.demo_bot_service import handle_demo_inbound
 from app.services.demo_restaurant_sync import sync_demo_restaurants
 from app.services.generic_flow_engine import GenericInteraction, process_inbound_message, send_generic_message
@@ -52,27 +53,6 @@ async def _seed_all_niches(db_session, sentinel: Restaurant) -> list[str]:
     return await sync_demo_restaurants(db_session, sentinel.id)
 
 
-def _extract_options(message: OutboundMessage) -> list[dict]:
-    interactive = message.payload.get("interactive", {})
-    itype = interactive.get("type")
-    if itype == "button":
-        return [{"id": b["reply"]["id"], "title": b["reply"]["title"]} for b in interactive["action"]["buttons"]]
-    if itype == "list":
-        rows = interactive["action"]["sections"][0]["rows"]
-        return [{"id": r["id"], "title": r["title"]} for r in rows]
-    return []
-
-
-def _last_interactive(sender: InMemoryWhatsAppSender) -> OutboundMessage:
-    for message in reversed(sender.sent):
-        if message.payload.get("type") != "interactive":
-            continue
-        if message.payload.get("interactive", {}).get("type") == "location_request_message":
-            continue
-        return message
-    raise AssertionError("No interactive options message was sent")
-
-
 def _last_text(sender: InMemoryWhatsAppSender) -> str:
     for message in reversed(sender.sent):
         if message.payload.get("type") == "text":
@@ -80,17 +60,17 @@ def _last_text(sender: InMemoryWhatsAppSender) -> str:
     raise AssertionError("No text message was sent")
 
 
-async def _picker_reply_ids(sender) -> set[str]:
-    """The picker can page across multiple interactive list messages (Meta caps a list at
-    10 rows total -- see demo_bot_service.py's _send_industry_picker) -- so this collects
-    every trailing consecutive interactive-list message's rows, not just the last one."""
-    ids: set[str] = set()
+def _last_picker_text(sender) -> str:
+    """The industry picker is one plain-text message, not a tap-to-select interactive list
+    (Meta caps those at 10 rows, and there are 12+ niches -- see demo_bot_service.py's
+    _send_industry_picker / _resolve_free_text_pick)."""
     for message in reversed(sender.sent):
-        interactive = message.payload.get("interactive", {})
-        if interactive.get("type") != "list":
-            break
-        ids |= {o["id"] for o in _extract_options(message)}
-    return ids
+        if message.payload.get("type") != "text":
+            continue
+        body = message.payload["text"]["body"]
+        if "Welcome to the KelvionTech Business OS" in body:
+            return body
+    raise AssertionError("No industry picker message was sent")
 
 
 # --- sync idempotency ----------------------------------------------------------------------
@@ -114,6 +94,37 @@ async def test_sync_demo_restaurants_creates_one_per_template_and_is_idempotent(
     assert created_again == []
     demo_restaurants_again = (await db_session.execute(select(Restaurant).where(Restaurant.is_demo.is_(True), Restaurant.id != sentinel.id))).scalars().all()
     assert len(demo_restaurants_again) == len(demo_restaurants)
+
+
+async def test_slug_collision_on_one_niche_does_not_block_the_other_eleven(db_session):
+    """Found live against a real dev database: an unrelated, ordinary (non-demo)
+    business already owned the literal slug "demo-restaurant" (pre-dating the demo-bot
+    naming convention). Provisioning used to be one all-or-nothing transaction, so that
+    single collision silently blocked EVERY niche's demo restaurant, not just
+    Restaurant's -- this proves the fix: each niche commits independently, and the
+    colliding niche still gets a real demo restaurant via a disambiguated slug rather
+    than being skipped or crashing the whole run.
+    """
+    sentinel = await _make_sentinel(db_session)
+    await sync_niche_templates(db_session)
+
+    stray_business = Restaurant(name="Someone's Actual Restaurant", slug="demo-restaurant")
+    db_session.add(stray_business)
+    await db_session.commit()
+
+    created = await sync_demo_restaurants(db_session, sentinel.id)
+    assert len(created) == 12, f"expected all 12 niches provisioned despite the slug collision, got {sorted(created)}"
+
+    restaurant_demo = (await db_session.execute(
+        select(Restaurant).where(Restaurant.niche_type == "restaurant", Restaurant.is_demo.is_(True))
+    )).scalar_one()
+    assert restaurant_demo.slug != "demo-restaurant"  # disambiguated, not skipped
+    assert restaurant_demo.slug.startswith("demo-restaurant-")
+
+    # The stray business itself is completely untouched.
+    untouched = await db_session.get(Restaurant, stray_business.id)
+    assert untouched.slug == "demo-restaurant"
+    assert untouched.is_demo is False
 
 
 # --- credential routing --------------------------------------------------------------------
@@ -181,8 +192,8 @@ async def test_picker_lists_every_current_niche_including_a_freshly_added_one(db
     sender = InMemoryWhatsAppSender()
     await handle_demo_inbound(db_session, sender, sentinel, "919999911111", GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
 
-    reply_ids = await _picker_reply_ids(sender)
-    assert "demo:pick:pet-grooming" in reply_ids
+    picker_text = _last_picker_text(sender)
+    assert "Pet Grooming" in picker_text
 
 
 async def test_welcome_banner_sent_before_picker_when_sentinel_has_branding(db_session):
@@ -198,7 +209,7 @@ async def test_welcome_banner_sent_before_picker_when_sentinel_has_branding(db_s
     images = [m for m in sender.sent if m.payload.get("type") == "image"]
     assert [m.payload["image"]["link"] for m in images] == [sentinel.logo_url, sentinel.cover_image_url]
     # Still followed by the actual picker -- the banner never replaces it.
-    assert len(await _picker_reply_ids(sender)) > 0
+    assert _last_picker_text(sender)
 
 
 async def test_welcome_banner_skipped_cleanly_when_sentinel_has_no_branding_set(db_session):
@@ -213,7 +224,7 @@ async def test_welcome_banner_skipped_cleanly_when_sentinel_has_no_branding_set(
     await handle_demo_inbound(db_session, sender, sentinel, "919999933333", GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
 
     assert not any(m.payload.get("type") == "image" for m in sender.sent)
-    assert len(await _picker_reply_ids(sender)) > 0
+    assert _last_picker_text(sender)
 
 
 # --- picking a niche starts its real entry step ---------------------------------------------
@@ -233,13 +244,79 @@ async def test_picking_a_niche_starts_its_entry_step(db_session):
         wa_message_id=_next_wamid(),
     )
 
-    assert "Starting the" in _last_text(sender)
+    assert "Welcome to" in _last_text(sender)
     session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
     assert session_row.active_restaurant_id == retail.id
 
     customer = (await db_session.execute(select(Customer).where(Customer.restaurant_id == retail.id, Customer.phone == phone))).scalar_one()
     state = (await db_session.execute(select(GenericConversationState).where(GenericConversationState.customer_id == customer.id))).scalar_one()
     assert state.current_step == "welcome"
+
+
+# --- free-text picking (numbered single-message picker, no interactive list) ---------------
+
+
+async def test_replying_with_a_bare_number_picks_that_niche(db_session):
+    sentinel = await _make_sentinel(db_session)
+    await _seed_all_niches(db_session, sentinel)
+
+    # Same ordering _send_industry_picker numbers by and _resolve_free_text_pick resolves
+    # against (see _active_niche_templates) -- so "1" must resolve to templates[0].
+    first_template = (await NicheTemplateRepository(db_session).list_all())[0]
+
+    sender = InMemoryWhatsAppSender()
+    phone = "919999944001"
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="1"), wa_message_id=_next_wamid())
+
+    session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
+    picked = await db_session.get(Restaurant, session_row.active_restaurant_id)
+    assert picked.niche_type == first_template.code
+
+
+async def test_replying_with_a_niche_name_picks_it(db_session):
+    sentinel = await _make_sentinel(db_session)
+    await _seed_all_niches(db_session, sentinel)
+
+    sender = InMemoryWhatsAppSender()
+    phone = "919999944002"
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="jewellers"), wa_message_id=_next_wamid())
+
+    session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
+    jewellers = (await db_session.execute(select(Restaurant).where(Restaurant.niche_type == "jewellers", Restaurant.is_demo.is_(True)))).scalar_one()
+    assert session_row.active_restaurant_id == jewellers.id
+
+
+async def test_plain_hi_never_gets_hijacked_into_a_niche_pick(db_session):
+    """Regression guard: a naive substring-anywhere match (`"hi" in name.lower()`) once
+    matched the plain greeting "hi" against "Education & Coa*chi*ng" and silently picked
+    that niche instead of ever showing the picker. This proves "hi" always shows the
+    picker, never auto-picks anything, regardless of which niches happen to be seeded."""
+    sentinel = await _make_sentinel(db_session)
+    await _seed_all_niches(db_session, sentinel)
+
+    sender = InMemoryWhatsAppSender()
+    phone = "919999944003"
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
+
+    assert _last_picker_text(sender)  # raises if no picker was sent
+    session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
+    assert session_row.active_restaurant_id is None  # nothing auto-picked
+
+
+async def test_unrecognized_free_text_falls_back_to_picker_not_a_crash(db_session):
+    sentinel = await _make_sentinel(db_session)
+    await _seed_all_niches(db_session, sentinel)
+
+    sender = InMemoryWhatsAppSender()
+    phone = "919999944004"
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="asdkjqwe"), wa_message_id=_next_wamid())
+
+    assert _last_picker_text(sender)
+    session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
+    assert session_row.active_restaurant_id is None
 
 
 # --- full order walkthrough through the dispatcher, to completion --------------------------
@@ -344,8 +421,8 @@ async def test_menu_keyword_returns_to_picker_without_disturbing_original_niche_
     assert state_before.current_step == "category_select"
 
     await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="menu"), wa_message_id=_next_wamid())
-    reply_ids = await _picker_reply_ids(sender)
-    assert "demo:pick:retail" in reply_ids  # picker shown again
+    picker_text = _last_picker_text(sender)
+    assert "Retail" in picker_text  # picker shown again
 
     session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
     assert session_row.active_restaurant_id is None
@@ -385,6 +462,60 @@ async def test_two_concurrent_demo_customers_on_the_same_niche_do_not_collide(db
     state_b = (await db_session.execute(select(GenericConversationState).where(GenericConversationState.customer_id == customer_b.id))).scalar_one()
     assert state_a.current_step == "category_select"
     assert state_b.current_step == "welcome"  # untouched by A's own progress
+
+
+async def test_two_concurrent_demo_customers_on_different_niches_do_not_collide(db_session):
+    """FINAL PRE-LIVE VERIFICATION section 11's exact scenario: Customer A picks
+    Jewellery, Customer B picks Restaurant, on the same flagship number, at the same
+    time -- their DemoSession routing must send each to a genuinely different demo
+    restaurant, with independently progressing conversation state, and B's Customer/
+    state rows must not even exist under the niche A is in (or vice versa)."""
+    sentinel = await _make_sentinel(db_session)
+    await _seed_all_niches(db_session, sentinel)
+    jewellery = (await db_session.execute(select(Restaurant).where(Restaurant.niche_type == "jewellers", Restaurant.is_demo.is_(True)))).scalar_one()
+    restaurant_niche = (await db_session.execute(select(Restaurant).where(Restaurant.niche_type == "restaurant", Restaurant.is_demo.is_(True)))).scalar_one()
+    assert jewellery.id != restaurant_niche.id
+
+    sender_a, sender_b = InMemoryWhatsAppSender(), InMemoryWhatsAppSender()
+    phone_a, phone_b = "919999977001", "919999977002"
+
+    # Interleaved, not sequential per-customer, to mirror two real prospects texting
+    # the flagship number around the same time.
+    await handle_demo_inbound(db_session, sender_a, sentinel, phone_a, GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
+    await handle_demo_inbound(db_session, sender_b, sentinel, phone_b, GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
+    await handle_demo_inbound(
+        db_session, sender_a, sentinel, phone_a,
+        GenericInteraction(kind="list_reply", reply_id="demo:pick:jewellers", text="Jewellery"), wa_message_id=_next_wamid(),
+    )
+    await handle_demo_inbound(
+        db_session, sender_b, sentinel, phone_b,
+        GenericInteraction(kind="list_reply", reply_id="demo:pick:restaurant", text="Restaurant"), wa_message_id=_next_wamid(),
+    )
+    # Advance A one step further into Jewellery; B must be completely unaffected.
+    await handle_demo_inbound(db_session, sender_a, sentinel, phone_a, GenericInteraction(kind="button_reply", reply_id="welcome:appointment", text="Book Appointment"), wa_message_id=_next_wamid())
+
+    customer_a_in_jewellery = (await db_session.execute(select(Customer).where(Customer.restaurant_id == jewellery.id, Customer.phone == phone_a))).scalar_one()
+    customer_b_in_restaurant = (await db_session.execute(select(Customer).where(Customer.restaurant_id == restaurant_niche.id, Customer.phone == phone_b))).scalar_one()
+
+    # Neither customer has a row under the OTHER niche's demo restaurant at all --
+    # true isolation, not just "different current_step values on shared rows".
+    stray_a = (await db_session.execute(select(Customer).where(Customer.restaurant_id == restaurant_niche.id, Customer.phone == phone_a))).scalar_one_or_none()
+    stray_b = (await db_session.execute(select(Customer).where(Customer.restaurant_id == jewellery.id, Customer.phone == phone_b))).scalar_one_or_none()
+    assert stray_a is None, "Customer A leaked a row into the Restaurant demo business"
+    assert stray_b is None, "Customer B leaked a row into the Jewellery demo business"
+
+    state_a = (await db_session.execute(select(GenericConversationState).where(GenericConversationState.customer_id == customer_a_in_jewellery.id))).scalar_one()
+    state_b = (await db_session.execute(select(GenericConversationState).where(GenericConversationState.customer_id == customer_b_in_restaurant.id))).scalar_one()
+    assert state_a.current_step == "category_select"  # A progressed into Jewellery
+    assert state_b.current_step == "welcome"  # B untouched, still at Restaurant's welcome
+
+    # The DemoSession pointer itself resolved each phone number to the correct,
+    # DIFFERENT demo restaurant -- the actual routing mechanism the flagship number
+    # depends on, not just an incidental side effect of Customer scoping.
+    session_a = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone_a))).scalar_one()
+    session_b = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone_b))).scalar_one()
+    assert session_a.active_restaurant_id == jewellery.id
+    assert session_b.active_restaurant_id == restaurant_niche.id
 
 
 # --- redelivery / idempotency ----------------------------------------------------------------

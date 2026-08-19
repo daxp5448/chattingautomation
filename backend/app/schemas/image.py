@@ -20,6 +20,9 @@ class ImageRead(BaseModel):
     restaurant_id: uuid.UUID
     image_type: str
     catalog_item_id: uuid.UUID | None
+    catalog_category_id: uuid.UUID | None
+    flow_definition_id: uuid.UUID | None
+    flow_step_id: str | None
     original_width: int
     original_height: int
     original_size_bytes: int
@@ -70,6 +73,23 @@ class ImageMetadataUpdate(BaseModel):
     alt_text: str | None = None
     display_order: int | None = None
     is_active: bool | None = None
+
+
+class ImageAttachRequest(BaseModel):
+    """Body for POST /restaurants/{id}/images/{image_id}/attach -- the 'Choose From Media
+    Library' reuse path: attaches an already-uploaded, already-processed image to a
+    (possibly different) owner without re-uploading or reprocessing. Exactly one of the
+    three owner shapes must be set -- validated at the router (same rule as the DB's
+    ck_image_has_owner constraint).
+    """
+
+    catalog_item_id: uuid.UUID | None = None
+    catalog_category_id: uuid.UUID | None = None
+    flow_definition_id: uuid.UUID | None = None
+    flow_step_id: str | None = None
+    caption: str | None = None
+    alt_text: str | None = None
+    display_order: int = 0
 
 
 class ImageCropRequest(BaseModel):

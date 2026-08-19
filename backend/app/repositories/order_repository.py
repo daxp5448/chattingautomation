@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.enums import OrderStatus, PaymentStatus
 from app.models.order import Order, OrderItem
+from app.models.restaurant import Restaurant
 from app.repositories.base import BaseRepository
 
 
@@ -55,6 +56,22 @@ class OrderRepository(BaseRepository[Order]):
         )
         result = await self.session.execute(stmt)
         return {row[0]: {"total_orders": row[1], "last_order_at": row[2]} for row in result.all()}
+
+    async def platform_totals(self) -> dict:
+        """Order count + revenue across every non-demo LEGACY-engine restaurant (Order,
+        not Engagement) -- see EngagementRepository.platform_summary_by_type for the
+        generic-engine counterpart; the Super Admin Dashboard's platform-stats endpoint
+        adds this into its "order" total so a business still on the legacy engine isn't
+        invisible to the platform-wide count.
+        """
+        stmt = (
+            select(func.count(Order.id), func.coalesce(func.sum(Order.total), 0))
+            .join(Restaurant, Restaurant.id == Order.restaurant_id)
+            .where(Restaurant.is_demo.is_(False))
+        )
+        result = await self.session.execute(stmt)
+        row = result.one()
+        return {"count": row[0], "revenue": float(row[1])}
 
     async def dashboard_stats(self, restaurant_id: uuid.UUID, since: datetime) -> dict:
         # Portable (SQLite + Postgres) CASE-WHEN conditional aggregation collapses what

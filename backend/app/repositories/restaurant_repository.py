@@ -1,6 +1,7 @@
 from cachetools import TTLCache
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from app.models.enums import RestaurantStatus
 from app.models.restaurant import Restaurant
 from app.repositories.base import BaseRepository
 
@@ -47,3 +48,35 @@ class RestaurantRepository(BaseRepository[Restaurant]):
             self.session.expunge(restaurant)
             _phone_number_id_cache[phone_number_id] = restaurant
         return restaurant
+
+    async def platform_counts(self) -> dict:
+        """Platform-wide business counts for the Super Admin Dashboard (see
+        app/api/v1/routers/dashboard.py's /admin/platform-stats) -- excludes `is_demo`
+        rows (showcase businesses, not real tenants) from every count, matching how the
+        Businesses list already treats them as a distinct, badged category rather than a
+        real business. One GROUP BY query for the niche breakdown, three plain counts for
+        the rest -- small enough at this scale not to need combining into one round trip.
+        """
+        non_demo = Restaurant.is_demo.is_(False)
+        total = (await self.session.execute(select(func.count(Restaurant.id)).where(non_demo))).scalar_one()
+        active = (
+            await self.session.execute(
+                select(func.count(Restaurant.id)).where(non_demo, Restaurant.status == RestaurantStatus.ACTIVE)
+            )
+        ).scalar_one()
+        connected_whatsapp = (
+            await self.session.execute(
+                select(func.count(Restaurant.id)).where(non_demo, Restaurant.whatsapp_phone_number_id.is_not(None))
+            )
+        ).scalar_one()
+        niche_rows = (
+            await self.session.execute(
+                select(Restaurant.niche_type, func.count(Restaurant.id)).where(non_demo).group_by(Restaurant.niche_type)
+            )
+        ).all()
+        return {
+            "total": total,
+            "active": active,
+            "connected_whatsapp": connected_whatsapp,
+            "by_niche": {(row[0] or "unassigned"): row[1] for row in niche_rows},
+        }

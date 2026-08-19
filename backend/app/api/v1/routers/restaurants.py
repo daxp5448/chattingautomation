@@ -22,6 +22,7 @@ from app.repositories.niche_template_repository import NicheTemplateRepository
 from app.repositories.order_repository import OrderRepository
 from app.repositories.restaurant_repository import RestaurantRepository, invalidate_restaurant_cache
 from app.repositories.user_repository import UserRepository
+from app.services.demo_restaurant_sync import sync_demo_restaurants
 from app.services.niche_provisioning import provision_from_template
 from app.schemas.audit_log import AuditLogRead
 from app.schemas.branch import BranchRead
@@ -220,6 +221,27 @@ async def get_demo_bot_status(db: DbSession, user: User = Depends(require_roles(
             for t in templates
         ],
     )
+
+
+@router.post("/demo-bot-status/provision", response_model=DemoBotStatus)
+async def provision_demo_bot_niches(db: DbSession, user: User = Depends(require_roles(UserRole.SUPER_ADMIN))):
+    """Admin-triggered equivalent of `python -m app.scripts.seed_demo_restaurants` -- lets a
+    Super Admin provision any niche still missing its demo restaurant straight from the
+    Industry Picker panel, instead of needing shell/CLI access to the deploy environment.
+    Same sentinel lookup as the CLI script; never touches a niche that's already provisioned.
+    """
+    result = await db.execute(
+        select(Restaurant).where(Restaurant.is_demo.is_(True), Restaurant.whatsapp_phone_number_id.is_not(None))
+    )
+    sentinel = result.scalars().first()
+    if sentinel is None:
+        raise HTTPException(
+            status_code=400,
+            detail='No sentinel Demo Bot restaurant configured yet -- create a business with '
+            '"Demo Bot business" checked and a real WhatsApp number first.',
+        )
+    await sync_demo_restaurants(db, sentinel.id)
+    return await get_demo_bot_status(db, user)
 
 
 @router.get("/{restaurant_id}", response_model=RestaurantRead)

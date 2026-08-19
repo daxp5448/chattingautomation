@@ -175,13 +175,17 @@ async def test_picker_filters_to_selected_niche_codes_only(db_session):
     sender = InMemoryWhatsAppSender()
     await handle_demo_inbound(db_session, sender, restaurant, "919999955501", GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
 
-    ids = set()
-    for m in sender.sent:
-        interactive = m.payload.get("interactive", {})
-        if interactive.get("type") == "list":
-            for section in interactive["action"]["sections"]:
-                ids |= {r["id"] for r in section["rows"]}
-    assert ids == {"demo:pick:retail", "demo:pick:salon"}
+    # The picker is one plain-text numbered message, not an interactive list (Meta's
+    # 10-row cap -- see demo_bot_service.py's _send_industry_picker) -- so filtering is
+    # proven by which niche names appear in that text, not by parsing list rows.
+    picker_text = next(
+        m.payload["text"]["body"] for m in sender.sent
+        if m.payload.get("type") == "text" and "Welcome to the KelvionTech Business OS" in m.payload["text"]["body"]
+    )
+    assert "Retail" in picker_text
+    assert "Salon" in picker_text
+    assert "Jewellers" not in picker_text
+    assert "Restaurant" not in picker_text
 
 
 # --- real end-to-end webhook routing ------------------------------------------------------------

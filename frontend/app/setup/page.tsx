@@ -3,6 +3,7 @@
 import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
+import { IconCheckCircle } from "@/components/icons";
 
 export default function SetupPage() {
   return (
@@ -78,7 +79,9 @@ function SetupForm() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-white to-primary/5 p-4">
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-lg shadow-slate-200/50">
-          <h1 className="text-lg font-semibold text-slate-900">Password set ✓</h1>
+          <h1 className="flex items-center justify-center gap-2 text-lg font-semibold text-slate-900">
+            <IconCheckCircle size={18} className="text-emerald-500" /> Password set
+          </h1>
           <p className="mt-2 text-sm text-slate-500">Taking you to sign in...</p>
         </div>
       </div>

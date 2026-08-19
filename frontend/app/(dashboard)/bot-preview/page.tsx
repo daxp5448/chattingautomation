@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import type { FlowDefinitionFull, FlowStep, HomeButton, MessageEntry, Restaurant } from "@/lib/types";
+import { IconFileText, IconMapPin, IconFlask, IconEye, IconCompass, IconEdit, IconRotateCcw, IconCheck, IconPlay } from "@/components/icons";
 
 const INSERTABLE_VARIABLES = [
   "business_name", "customer_name", "date", "time", "order_id", "booking_id",
@@ -61,10 +62,20 @@ function BotBubble({ message, onOption }: { message: PreviewMessage; onOption: (
     );
   }
   if (message.type === "document") {
-    return <div className={base}>📄 {message.document?.filename}{message.document?.caption && <p className="mt-1 text-xs text-slate-500">{message.document.caption}</p>}</div>;
+    return (
+      <div className={`${base} flex items-start gap-1.5`}>
+        <IconFileText size={14} className="mt-0.5 shrink-0 text-slate-400" />
+        <span>{message.document?.filename}{message.document?.caption && <p className="mt-1 text-xs text-slate-500">{message.document.caption}</p>}</span>
+      </div>
+    );
   }
   if (message.type === "location") {
-    return <div className={base}>📍 {message.location?.name || "Location"}<p className="text-xs text-slate-500">{message.location?.address}</p></div>;
+    return (
+      <div className={`${base} flex items-start gap-1.5`}>
+        <IconMapPin size={14} className="mt-0.5 shrink-0 text-slate-400" />
+        <span>{message.location?.name || "Location"}<p className="text-xs text-slate-500">{message.location?.address}</p></span>
+      </div>
+    );
   }
   if (message.type === "interactive") {
     const interactive = message.interactive!;
@@ -100,7 +111,12 @@ function BotBubble({ message, onOption }: { message: PreviewMessage; onOption: (
       );
     }
     if (interactive.type === "location_request_message") {
-      return <div className={base}>📍 {interactive.body?.text} <span className="text-xs text-slate-400">(native location share)</span></div>;
+      return (
+        <div className={`${base} flex items-start gap-1.5`}>
+          <IconMapPin size={14} className="mt-0.5 shrink-0 text-slate-400" />
+          <span>{interactive.body?.text} <span className="text-xs text-slate-400">(native location share)</span></span>
+        </div>
+      );
     }
     if (interactive.type === "flow") {
       return <div className={base}>{interactive.body?.text} <span className="mt-1 block text-xs text-emerald-700">[Opens WhatsApp Flow: {interactive.action?.parameters?.flow_cta}]</span></div>;
@@ -118,9 +134,12 @@ function WhatsAppPhone({
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [turns]);
 
+  // Phone bezel is neutral graphite (not brand teal) and the inner header/wallpaper use
+  // WhatsApp's own real colors -- intentional, since the whole point is an accurate
+  // WhatsApp simulation, not a KelvionTech-branded surface.
   return (
-    <div className="sticky top-6 mx-auto w-full max-w-sm overflow-hidden rounded-[2rem] border-8 border-slate-900 bg-slate-900 shadow-xl">
-      <div className="overflow-hidden rounded-[1.4rem] bg-[#e5ddd5]">
+    <div className="sticky top-6 mx-auto w-full max-w-sm overflow-hidden rounded-[2.25rem] border-[6px] border-slate-900 bg-slate-900 shadow-panel">
+      <div className="overflow-hidden rounded-[1.65rem] bg-[#e5ddd5]">
         <div className="flex items-center gap-2 bg-emerald-700 px-3 py-2.5 text-white">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-xs font-bold">
             {businessName.slice(0, 1).toUpperCase() || "?"}
@@ -151,8 +170,9 @@ function WhatsAppPhone({
         </div>
         <div className="flex gap-2 border-t border-slate-300 bg-white p-2">
           {!sessionStarted ? (
-            <button onClick={onStart} disabled={loading} className="w-full rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
-              ▶ Start Preview
+            <button onClick={onStart} disabled={loading} className="flex w-full items-center justify-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
+              <IconPlay size={12} />
+              Start Preview
             </button>
           ) : (
             <>
@@ -310,7 +330,11 @@ function StepEditor({
               Restore Default
             </button>
           )}
-          {saved && <span className="text-xs font-medium text-emerald-600">Saved ✓</span>}
+          {saved && (
+            <span className="flex items-center gap-1 text-xs font-medium text-emerald-600">
+              <IconCheck size={12} strokeWidth={2.2} /> Saved
+            </span>
+          )}
         </div>
       </section>
 
@@ -413,7 +437,11 @@ function WelcomeMediaEditor({ restaurantId }: { restaurantId: string }) {
           {saving ? "Saving..." : "Save"}
         </button>
       </div>
-      {saved && <span className="text-xs font-medium text-emerald-600">Saved ✓</span>}
+      {saved && (
+        <span className="flex items-center gap-1 text-xs font-medium text-emerald-600">
+          <IconCheck size={12} strokeWidth={2.2} /> Saved
+        </span>
+      )}
     </section>
   );
 }
@@ -432,13 +460,20 @@ function BotPreviewForRestaurant({ restaurantId }: { restaurantId: string }) {
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   async function loadAll() {
+    setLoadError(null);
     try {
-      const [r, f, m] = await Promise.all([
-        apiFetch<Restaurant>(`/restaurants/${restaurantId}`),
+      // Mirrors flow-builder/page.tsx's exact load-order: fetch the restaurant first and
+      // check uses_generic_engine before ever calling /flow -- a legacy-engine business has
+      // no FlowDefinition at all, and its 404 shouldn't be mistaken for "flow not set up
+      // yet" on a generic-engine business.
+      const r = await apiFetch<Restaurant>(`/restaurants/${restaurantId}`);
+      setRestaurant(r);
+      if (!r.uses_generic_engine) return;
+
+      const [f, m] = await Promise.all([
         apiFetch<FlowDefinitionFull>(`/restaurants/${restaurantId}/flow`),
         apiFetch<MessageEntry[]>(`/restaurants/${restaurantId}/flow/messages`),
       ]);
-      setRestaurant(r);
       setFlow(f);
       setMessages(m);
       setSelectedStepId((prev) => prev ?? f.entry_step_id);
@@ -532,7 +567,35 @@ function BotPreviewForRestaurant({ restaurantId }: { restaurantId: string }) {
   const selectedEntry = useMemo(() => messages.find((m) => m.step_id === selectedStepId) ?? null, [messages, selectedStepId]);
 
   if (loadError) {
-    return <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>;
+    return (
+      <div className="flex flex-wrap items-center gap-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+        <span>{loadError}</span>
+        <button
+          onClick={loadAll}
+          className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (restaurant && !restaurant.uses_generic_engine) {
+    return (
+      <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <p>
+          Bot Preview is for businesses on the newer multi-niche engine. This business ({restaurant.name}) runs on
+          the original restaurant-only flow -- use Bot Builder / Home Builder for it instead.
+        </p>
+        <p>
+          Looking for a niche business instead? Go to{" "}
+          <a href="/restaurants" className="font-medium underline">
+            Businesses
+          </a>{" "}
+          and pick one WITHOUT the amber &quot;Legacy&quot; badge (e.g. &quot;Demo — Restaurant&quot;, with a dash --
+          not the similarly-named legacy one).
+        </p>
+      </div>
+    );
   }
   if (!flow) {
     return (
@@ -544,47 +607,53 @@ function BotPreviewForRestaurant({ restaurantId }: { restaurantId: string }) {
   }
 
   return (
-    <div className="space-y-4 pb-16">
+    <div className="space-y-5 pb-16">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Bot Preview</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Bot Preview</h1>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
             {restaurant?.name} → Customer Journey. Edit on the left, see the exact WhatsApp result on the right — same live
             configuration real customers get.
           </p>
         </div>
-        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">● LIVE</span>
+        <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> LIVE
+        </span>
       </div>
 
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-        🧪 Every save here goes live immediately (no Draft/Publish staging yet) — but the preview itself never creates a
-        real customer, order, payment, or notification.
+      <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5 text-xs font-medium text-amber-800">
+        <IconFlask size={15} className="mt-0.5 shrink-0" />
+        <span>
+          Every save here goes live immediately (no Draft/Publish staging yet) — but the preview itself never creates a
+          real customer, order, payment, or notification.
+        </span>
       </div>
 
-      {previewError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{previewError}</p>}
+      {previewError && <p className="rounded-lg border border-red-100 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">{previewError}</p>}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
         {/* LEFT: editor */}
         <div className="space-y-4">
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-4 py-2.5">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card">
+            <div className="border-b border-slate-100 px-4 py-3">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Customer Journey</h2>
             </div>
             <nav className="max-h-64 overflow-y-auto p-2">
               {messages.map((m) => (
-                <div key={m.step_id} className={`flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm ${selectedStepId === m.step_id ? "bg-primary/10 font-medium text-primary" : "text-slate-600 hover:bg-slate-50"}`}>
+                <div key={m.step_id} className={`group relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${selectedStepId === m.step_id ? "bg-primary/10 font-medium text-primary-dark" : "text-slate-600 hover:bg-slate-50"}`}>
+                  <span className={`absolute inset-y-1 left-0 w-[3px] rounded-full bg-primary transition-opacity ${selectedStepId === m.step_id ? "opacity-100" : "opacity-0"}`} />
                   <button onClick={() => setSelectedStepId(m.step_id)} className="flex-1 truncate text-left">
                     {m.step_id === flow.entry_step_id ? "● " : ""}{m.step_id}
                   </button>
-                  <button onClick={() => previewThisStep(m.step_id)} disabled={previewLoading} className="shrink-0 text-[11px] text-slate-400 hover:text-primary disabled:opacity-40">
-                    👁 Preview
+                  <button onClick={() => previewThisStep(m.step_id)} disabled={previewLoading} className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-slate-400 transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-40">
+                    <IconEye size={12} /> Preview
                   </button>
                 </div>
               ))}
             </nav>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
             {selectedEntry ? (
               <StepEditor key={selectedEntry.step_id} restaurantId={restaurantId} entry={selectedEntry} flow={flow} onSaved={refreshMessages} />
             ) : (
@@ -593,8 +662,12 @@ function BotPreviewForRestaurant({ restaurantId }: { restaurantId: string }) {
           </div>
 
           <div className="flex flex-wrap gap-2 text-xs">
-            <a href="/flow-builder" className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50">🧭 Open Visual Flow</a>
-            <a href="/messages" className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50">📝 Open Messages</a>
+            <a href="/flow-builder" className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-medium text-slate-600 shadow-soft transition-colors hover:border-primary/30 hover:text-primary-dark">
+              <IconCompass size={13} /> Open Visual Flow
+            </a>
+            <a href="/messages" className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-medium text-slate-600 shadow-soft transition-colors hover:border-primary/30 hover:text-primary-dark">
+              <IconEdit size={13} /> Open Messages
+            </a>
           </div>
         </div>
 
@@ -613,8 +686,8 @@ function BotPreviewForRestaurant({ restaurantId }: { restaurantId: string }) {
           />
           {sessionId && (
             <div className="mt-3 flex justify-center">
-              <button onClick={handleRestart} disabled={previewLoading} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50">
-                ↻ Restart
+              <button onClick={handleRestart} disabled={previewLoading} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-soft transition-colors hover:border-primary/30 hover:text-primary-dark disabled:opacity-50">
+                <IconRotateCcw size={13} /> Restart
               </button>
             </div>
           )}

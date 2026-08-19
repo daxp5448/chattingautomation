@@ -12,6 +12,7 @@ from app.api.v1.routers import (
     customers,
     dashboard,
     display_devices,
+    engagements,
     faq,
     feature_packages,
     flow_definitions,
@@ -20,6 +21,7 @@ from app.api.v1.routers import (
     generic_payments,
     image_type_profiles,
     images,
+    jewellery,
     media,
     menu,
     messages,
@@ -41,8 +43,10 @@ api_router.include_router(menu.router)
 api_router.include_router(catalog.router)
 api_router.include_router(customers.router)
 api_router.include_router(orders.router)
+api_router.include_router(engagements.router)
 api_router.include_router(bot_config.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(dashboard.admin_router)
 api_router.include_router(coupons.router)
 api_router.include_router(faq.router)
 api_router.include_router(conversations.router)
@@ -65,3 +69,4 @@ api_router.include_router(generic_conversations.router)
 api_router.include_router(feature_packages.router)
 api_router.include_router(media.router)
 api_router.include_router(messages.router)
+api_router.include_router(jewellery.router)

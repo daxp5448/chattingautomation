@@ -14,6 +14,7 @@ from app.repositories.menu_repository import AddonRepository, CategoryRepository
 from app.schemas.menu import (
     AddonCreate,
     AddonRead,
+    AddonUpdate,
     CategoryCreate,
     CategoryRead,
     CategoryUpdate,
@@ -207,3 +208,38 @@ async def list_addons(restaurant_id: uuid.UUID, db: DbSession, user: CurrentUser
     tenant_id = resolve_tenant_id(user, restaurant_id)
     repo = AddonRepository(db)
     return await repo.list(restaurant_id=tenant_id)
+
+
+@router.patch("/addons/{addon_id}", response_model=AddonRead)
+async def update_addon(
+    restaurant_id: uuid.UUID, addon_id: uuid.UUID, payload: AddonUpdate, db: DbSession, user: User = Depends(_MANAGE_MENU)
+):
+    tenant_id = resolve_tenant_id(user, restaurant_id)
+    repo = AddonRepository(db)
+    addon = await repo.get(addon_id, tenant_id)
+    if not addon:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Addon not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(addon, field, value)
+    await repo.commit()
+    return addon
+
+
+@router.delete("/addons/{addon_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_addon(
+    restaurant_id: uuid.UUID, addon_id: uuid.UUID, db: DbSession, user: User = Depends(_MANAGE_MENU)
+):
+    tenant_id = resolve_tenant_id(user, restaurant_id)
+    repo = AddonRepository(db)
+    addon = await repo.get(addon_id, tenant_id)
+    if not addon:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Addon not found")
+    try:
+        await repo.delete(addon)
+        await repo.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Can't delete this addon: it has existing orders or other data referencing it",
+        )

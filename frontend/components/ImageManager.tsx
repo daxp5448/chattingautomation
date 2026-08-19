@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
-import type { ImageRecord } from "@/lib/types";
+import type { ImageLibraryEntry, ImageRecord } from "@/lib/types";
 import { ImageCropModal } from "@/components/ImageCropModal";
+import { IconX } from "@/components/icons";
 
 // Polls GET /images/{id} until processing finishes -- in this dev/test environment the
 // backend's Celery dispatch is synchronous by the time the upload response returns, but
@@ -12,19 +13,45 @@ import { ImageCropModal } from "@/components/ImageCropModal";
 const POLL_INTERVAL_MS = 1200;
 const POLL_TIMEOUT_MS = 30_000;
 
+// One reusable image editor for every owner an Image row can attach to (see
+// backend/app/models/image.py's docstring) -- a catalog item, a catalog category, or one
+// specific flow step. Every owner shape maps to the same upload/attach/list query
+// contract (backend/app/api/v1/routers/images.py), so this component never needs to know
+// which owner it's editing beyond building the right form fields/query params.
+export type ImageOwner =
+  | { catalogItemId: string }
+  | { catalogCategoryId: string }
+  | { flowDefinitionId: string; stepId: string };
+
+function ownerFormFields(owner: ImageOwner): Record<string, string> {
+  if ("catalogItemId" in owner) return { catalog_item_id: owner.catalogItemId };
+  if ("catalogCategoryId" in owner) return { catalog_category_id: owner.catalogCategoryId };
+  return { flow_definition_id: owner.flowDefinitionId, flow_step_id: owner.stepId };
+}
+
+// Query string for GET /restaurants/{id}/images -- exported so callers that fetch an
+// owner's current images (to pass into this component's `images` prop) build the same
+// owner encoding this component uploads/attaches against, instead of reimplementing it.
+export function ownerQueryString(owner: ImageOwner): string {
+  const params = new URLSearchParams(ownerFormFields(owner));
+  return params.toString();
+}
+
 interface Props {
   restaurantId: string;
   imageType: string;
-  catalogItemId: string;
+  owner: ImageOwner;
   images: ImageRecord[];
   onChange: (images: ImageRecord[]) => void;
 }
 
-export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, images, onChange }: Props) {
+export function ImageManager({ restaurantId, imageType, owner, images, onChange }: Props) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [cropTarget, setCropTarget] = useState<ImageRecord | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [dragImageId, setDragImageId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function pollUntilReady(imageId: string): Promise<ImageRecord> {
@@ -42,7 +69,7 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
     try {
       const formData = new FormData();
       formData.append("image_type", imageType);
-      formData.append("catalog_item_id", catalogItemId);
+      for (const [key, value] of Object.entries(ownerFormFields(owner))) formData.append(key, value);
       formData.append("file", file);
       // Appends after whatever's already shown, rather than every upload defaulting to
       // the same order value and needing a manual reorder just to separate them.
@@ -58,6 +85,21 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
       setError(err instanceof ApiError ? err.message : "Failed to upload image");
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleAttachFromLibrary(entry: ImageLibraryEntry) {
+    setError(null);
+    try {
+      const existingCount = images.filter((img) => !img.replaced_by_image_id).length;
+      const attached = await apiFetch<ImageRecord>(`/restaurants/${restaurantId}/images/${entry.id}/attach`, {
+        method: "POST",
+        body: JSON.stringify({ ...ownerFormFields(owner), display_order: existingCount }),
+      });
+      onChange([...images, attached]);
+      setLibraryOpen(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to attach image");
     }
   }
 
@@ -103,14 +145,32 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
   }
 
   function moveImage(imageId: string, direction: -1 | 1) {
-    const ordered = [...current].sort((a, b) => a.display_order - b.display_order || a.created_at.localeCompare(b.created_at));
-    const index = ordered.findIndex((img) => img.id === imageId);
+    const index = current.findIndex((img) => img.id === imageId);
     const targetIndex = index + direction;
-    if (index < 0 || targetIndex < 0 || targetIndex >= ordered.length) return;
-    const a = ordered[index];
-    const b = ordered[targetIndex];
+    if (index < 0 || targetIndex < 0 || targetIndex >= current.length) return;
+    const a = current[index];
+    const b = current[targetIndex];
     updateMetadata(a.id, { display_order: b.display_order });
     updateMetadata(b.id, { display_order: a.display_order });
+  }
+
+  // Drag-to-reorder: dropping image A onto image B moves A to B's position and shifts
+  // everything between them, then persists sequential display_order (0..n-1) for the
+  // whole set -- not just a two-item swap, so a drag across several cards in one gesture
+  // lands where the user actually dropped it.
+  function reorderByDrag(sourceId: string, targetId: string) {
+    if (sourceId === targetId) return;
+    const ids = current.map((img) => img.id);
+    const from = ids.indexOf(sourceId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    const reordered = [...ids];
+    reordered.splice(from, 1);
+    reordered.splice(to, 0, sourceId);
+    reordered.forEach((id, order) => {
+      const img = current.find((i) => i.id === id);
+      if (img && img.display_order !== order) updateMetadata(id, { display_order: order });
+    });
   }
 
   function onDrop(e: React.DragEvent<HTMLDivElement>) {
@@ -128,39 +188,59 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
     <div className="space-y-3">
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        onClick={() => fileInput.current?.click()}
-        className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center text-sm transition-colors ${
-          dragOver ? "border-primary bg-primary/5" : "border-slate-300 text-slate-500 hover:border-slate-400"
-        }`}
-      >
-        <input
-          ref={fileInput}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleUpload(file);
-            e.target.value = "";
-          }}
-        />
-        {uploading ? "Uploading & processing..." : "Drag an image here, or click to browse"}
+      <div className="flex flex-wrap gap-2">
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          onClick={() => fileInput.current?.click()}
+          className={`flex flex-1 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center text-sm transition-colors ${
+            dragOver ? "border-primary bg-primary/5" : "border-slate-300 text-slate-500 hover:border-slate-400"
+          }`}
+        >
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleUpload(file);
+              e.target.value = "";
+            }}
+          />
+          {uploading ? "Uploading & processing..." : "Drag an image here, or click to browse"}
+        </div>
+        <button
+          type="button"
+          onClick={() => setLibraryOpen(true)}
+          className="shrink-0 self-stretch rounded-lg border-2 border-dashed border-slate-300 px-4 py-8 text-sm font-medium text-slate-500 hover:border-slate-400 hover:text-slate-700"
+        >
+          Choose From Media Library
+        </button>
       </div>
 
       {current.length > 1 && (
         <p className="text-xs text-slate-400">
-          {current.length} images -- shown to customers in this order, each with its own caption. Use ▲/▼ to reorder.
+          {current.length} images -- shown to customers in this order, each with its own caption. Drag to reorder, or use ▲/▼.
         </p>
       )}
 
       {current.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {current.map((img, index) => (
-            <div key={img.id} className={`rounded-lg border p-2 ${img.is_active ? "border-slate-200" : "border-slate-200 bg-slate-50 opacity-60"}`}>
+            <div
+              key={img.id}
+              draggable
+              onDragStart={() => setDragImageId(img.id)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragImageId) reorderByDrag(dragImageId, img.id);
+                setDragImageId(null);
+              }}
+              className={`cursor-move rounded-lg border p-2 ${img.is_active ? "border-slate-200" : "border-slate-200 bg-slate-50 opacity-60"}`}
+            >
               <div className="flex gap-2">
                 <div className="flex flex-col items-center justify-center gap-0.5">
                   <button
@@ -268,6 +348,81 @@ export function ImageUploadWidget({ restaurantId, imageType, catalogItemId, imag
           }}
         />
       )}
+
+      {libraryOpen && (
+        <MediaLibraryPicker
+          restaurantId={restaurantId}
+          onClose={() => setLibraryOpen(false)}
+          onPick={handleAttachFromLibrary}
+        />
+      )}
+    </div>
+  );
+}
+
+function MediaLibraryPicker({
+  restaurantId,
+  onClose,
+  onPick,
+}: {
+  restaurantId: string;
+  onClose: () => void;
+  onPick: (entry: ImageLibraryEntry) => void;
+}) {
+  const [entries, setEntries] = useState<ImageLibraryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const query = search ? `?search=${encodeURIComponent(search)}` : "";
+    apiFetch<ImageLibraryEntry[]>(`/restaurants/${restaurantId}/images/library${query}`)
+      .then((rows) => { if (!cancelled) setEntries(rows.filter((r) => r.status === "ready")); })
+      .catch(() => { if (!cancelled) setEntries([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [restaurantId, search]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-4 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-800">Choose From Media Library</h3>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700"><IconX size={15} /></button>
+        </div>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by item name..."
+          className="mb-3 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+        />
+        {loading ? (
+          <p className="text-sm text-slate-400">Loading...</p>
+        ) : entries.length === 0 ? (
+          <p className="text-sm text-slate-400">No reusable images found.</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {entries.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => onPick(entry)}
+                className="group relative overflow-hidden rounded-md border border-slate-200 hover:border-primary"
+                title={entry.caption || entry.catalog_item?.name || ""}
+              >
+                <img src={entry.urls.thumbnail || entry.urls.website} alt="" className="h-24 w-full object-cover" />
+                <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-1 py-0.5 text-[10px] text-white opacity-0 group-hover:opacity-100">
+                  {entry.caption || entry.catalog_item?.name || "Use this image"}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -19,13 +19,17 @@ class Image(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     overwrites this row -- it creates a NEW Image row and links `replaced_by_image_id` on
     this one, so `restore` can always repoint back to a specific historical version.
 
-    Ownership is a real, typed, nullable FK per consuming model (`catalog_item_id` is the
-    only one this pilot adds), never a polymorphic owner_type/owner_id pair -- matching
-    every other table in this codebase (CatalogItem.category_id, EngagementItem.
-    engagement_id, etc.), which keeps DB-level referential integrity and selectinload
-    working. Add one more nullable FK column (+ widen the owner-count CheckConstraint)
-    per future consuming model rather than a generic polymorphic column pair; genericity
-    lives in the service layer (image_pipeline.py), not the schema.
+    Ownership is a real, typed, nullable FK per consuming model, never a polymorphic
+    owner_type/owner_id pair -- matching every other table in this codebase
+    (CatalogItem.category_id, EngagementItem.engagement_id, etc.), which keeps DB-level
+    referential integrity and selectinload working. `catalog_item_id` was the pilot;
+    `catalog_category_id` and `flow_definition_id`+`flow_step_id` (images-in-the-flow,
+    not just in catalog items) were added the same way -- one more nullable FK column (+
+    widened owner-count CheckConstraint) per consuming model, never a generic polymorphic
+    column pair; genericity lives in the service layer (image_presenter.py), not the
+    schema. `flow_step_id` has no FK of its own (steps are JSON dicts inside
+    FlowDefinition.steps, not their own rows) -- it's a plain string matched against a
+    step's `step_id` at read time, always paired with flow_definition_id.
 
     `restaurant_id` is denormalized directly onto this table (not derived by joining
     through the owner) specifically so every query can filter `WHERE restaurant_id = :tenant_id`
@@ -36,12 +40,18 @@ class Image(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "images"
     __table_args__ = (
-        # Exactly one owner column must be set. Only one owner column exists in this
-        # pilot (catalog_item_id) so this is trivially "IS NOT NULL" for now -- widen the
-        # OR/count expression here as more nullable owner FKs are added later, rather than
-        # ever making an owner column NOT NULL outright (that would block a future image
-        # attaching to a different owner kind without a migration touching this column).
-        CheckConstraint("catalog_item_id IS NOT NULL", name="ck_image_has_owner"),
+        # Exactly one owner "shape" must be set: catalog_item_id alone, catalog_category_id
+        # alone, or flow_definition_id+flow_step_id together. Counts each shape as 0/1 and
+        # requires the total to be exactly 1 -- widen this the same way (one more CASE term)
+        # if another owner column is ever added, rather than making any owner column NOT
+        # NULL outright (that would block a future image attaching to a different owner
+        # kind without a migration touching this column).
+        CheckConstraint(
+            "(CASE WHEN catalog_item_id IS NOT NULL THEN 1 ELSE 0 END + "
+            "CASE WHEN catalog_category_id IS NOT NULL THEN 1 ELSE 0 END + "
+            "CASE WHEN flow_definition_id IS NOT NULL AND flow_step_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
+            name="ck_image_has_owner",
+        ),
     )
 
     restaurant_id: Mapped[uuid.UUID] = mapped_column(
@@ -49,10 +59,19 @@ class Image(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     image_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
 
-    # --- Owner columns (one per consuming model, all nullable -- see class docstring) ---
+    # --- Owner columns (one shape per consuming model, all nullable -- see class docstring) ---
     catalog_item_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("catalog_items.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    catalog_category_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("catalog_categories.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    flow_definition_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("flow_definitions.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # Matched against a step dict's `step_id` at read time (see FlowDefinition.steps'
+    # docstring) -- not a DB FK, since steps are JSON entries, not rows of their own.
+    flow_step_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
     original_key: Mapped[str] = mapped_column(String(500), nullable=False)
     original_format: Mapped[str] = mapped_column(String(20), nullable=False)

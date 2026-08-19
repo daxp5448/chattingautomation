@@ -29,7 +29,7 @@ async def test_shared_category_image_still_uses_old_single_combo_image(db_sessio
     gold_category_id = await _get_category_id(db_session, restaurant.id, "Gold Jewellery")
 
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:explore")
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:appointment")
     before = len(sender.sent)
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"category:{gold_category_id}")
     sent = sender.sent[before:]
@@ -52,13 +52,17 @@ async def test_distinct_item_photos_trigger_a_photo_burst_before_the_selector(db
     await db_session.commit()
 
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:explore")
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:appointment")
     before = len(sender.sent)
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"category:{gold_category_id}")
     sent = sender.sent[before:]
 
-    # Intro text, then each item's own photo, then the interactive selector -- in order.
-    assert sent[0].payload.get("type") == "text"
+    # Each item's own photo first, then the interactive selector last -- no separate intro
+    # text (that would violate images-before-options and just repeat the selector's own
+    # body text a second time -- see _send_options's burst_urls branch).
+    text_messages = [m for m in sent if m.payload.get("type") == "text"]
+    assert len(text_messages) == 0
+    assert sent[0].payload.get("type") == "image"
     image_messages = [m for m in sent if m.payload.get("type") == "image"]
     assert [m.payload["image"]["link"] for m in image_messages] == [
         "https://cdn.example.com/necklace.jpg", "https://cdn.example.com/bangles.jpg",
@@ -81,7 +85,7 @@ async def test_partial_photography_falls_back_to_combo_image_not_a_mixed_burst(d
     await db_session.commit()
 
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:explore")
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:appointment")
     before = len(sender.sent)
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"category:{gold_category_id}")
     sent = sender.sent[before:]
@@ -114,7 +118,7 @@ async def test_category_exceeding_photo_burst_max_falls_back_to_combo_image(db_s
     await db_session.commit()
 
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:explore")
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:appointment")
     before = len(sender.sent)
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"category:{gold_category_id}")
     sent = sender.sent[before:]

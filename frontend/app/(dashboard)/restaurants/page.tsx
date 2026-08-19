@@ -5,6 +5,13 @@ import { apiFetch, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useCurrentRestaurant } from "@/lib/restaurant";
 import type { AuditLogEntry, Branch, DisplayDevice, DisplayDeviceCreateResult, FeaturePackage, NicheTemplateSummary, Restaurant, RestaurantCreateResult } from "@/lib/types";
+import { IconKey, IconDownload, IconGlobe, IconAlertTriangle, IconMonitor, IconSettings } from "@/components/icons";
+
+// Sentinel value for the Business type <select> -- distinct from "" (the unselectable
+// placeholder) so a Super Admin has to deliberately pick THIS to get the legacy engine,
+// rather than it being whatever's silently selected if they never touch the dropdown.
+// See handleCreate, which converts this back to niche_code: null for the API.
+const LEGACY_OPTION = "__legacy__";
 
 const STATUS_STYLES: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700",
@@ -190,7 +197,7 @@ function SubscriptionSection({ restaurant, onChanged }: { restaurant: Restaurant
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h3 className="flex items-center gap-2 font-medium text-slate-900">🔑 Subscription</h3>
+      <h3 className="flex items-center gap-2 font-medium text-slate-900"><IconKey size={15} /> Subscription</h3>
       <p className="mt-1 text-sm text-slate-500">
         Controls whether this business's WhatsApp bot is allowed to take orders. Nothing here deletes data --
         reactivating a suspended or cancelled business brings it back exactly as it was.
@@ -218,9 +225,15 @@ function SubscriptionSection({ restaurant, onChanged }: { restaurant: Restaurant
         <button
           disabled={exporting}
           onClick={exportData}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+          className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
         >
-          {exporting ? "Exporting..." : "⬇ Export data"}
+          {exporting ? (
+            "Exporting..."
+          ) : (
+            <>
+              <IconDownload size={12} /> Export data
+            </>
+          )}
         </button>
         <button
           onClick={() => {
@@ -333,7 +346,7 @@ function DemoModeSection({ restaurant, onChanged }: { restaurant: Restaurant; on
     <div className={`rounded-xl border p-5 shadow-sm ${restaurant.demo_mode_enabled ? "border-violet-300 bg-violet-50" : "border-slate-200 bg-white"}`}>
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="flex items-center gap-2 font-medium text-slate-900">🌐 Industry Picker Mode</h3>
+          <h3 className="flex items-center gap-2 font-medium text-slate-900"><IconGlobe size={15} /> Industry Picker Mode</h3>
           <p className="mt-1 text-sm text-slate-500">
             Temporarily repoint this business&apos;s own connected WhatsApp number at the multi-industry picker
             instead of its real order flow -- useful for showing the platform to prospects on a number that&apos;s
@@ -354,8 +367,9 @@ function DemoModeSection({ restaurant, onChanged }: { restaurant: Restaurant; on
       </div>
 
       {restaurant.demo_mode_enabled && (
-        <p className="mt-3 rounded-lg bg-violet-100 px-3 py-2 text-xs font-medium text-violet-800">
-          ⚠️ Live right now: anyone messaging this number sees the industry picker, not {restaurant.name}&apos;s real menu.
+        <p className="mt-3 flex items-start gap-1.5 rounded-lg bg-violet-100 px-3 py-2 text-xs font-medium text-violet-800">
+          <IconAlertTriangle size={13} className="mt-0.5 shrink-0" />
+          Live right now: anyone messaging this number sees the industry picker, not {restaurant.name}&apos;s real menu.
         </p>
       )}
       {!restaurant.whatsapp_phone_number_id && (
@@ -456,7 +470,7 @@ function PosDisplaysSection({ restaurant }: { restaurant: Restaurant }) {
   return (
     <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div>
-        <h2 className="text-sm font-semibold text-slate-800">📺 POS Displays</h2>
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800"><IconMonitor size={15} /> POS Displays</h2>
         <p className="mt-1 text-xs text-slate-500">
           Generate a read-only link for a counter or kitchen screen -- it shows a live-updating order board without
           needing anyone to log in. Revoke a link instantly if a device is lost or replaced.
@@ -553,6 +567,7 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
   const [razorpayWebhookSecret, setRazorpayWebhookSecret] = useState("");
   const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState(restaurant.whatsapp_phone_number_id || "");
   const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState(restaurant.whatsapp_business_account_id || "");
+  const [whatsappCatalogId, setWhatsappCatalogId] = useState(restaurant.whatsapp_catalog_id || "");
   const [whatsappAccessToken, setWhatsappAccessToken] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState(restaurant.cover_image_url || "");
   const [logoUrl, setLogoUrl] = useState(restaurant.logo_url || "");
@@ -585,6 +600,7 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
         default_payment_method: defaultPaymentMethod,
         whatsapp_phone_number_id: whatsappPhoneNumberId || null,
         whatsapp_business_account_id: whatsappBusinessAccountId || null,
+        whatsapp_catalog_id: whatsappCatalogId || null,
         cover_image_url: coverImageUrl || null,
         logo_url: logoUrl || null,
         loyalty_settings: {
@@ -613,7 +629,7 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
   return (
     <div className="space-y-6">
     <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-800">⚙️ Settings: {restaurant.name}</h2>
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800"><IconSettings size={15} /> Settings: {restaurant.name}</h2>
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
       <div>
@@ -730,6 +746,23 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
         <p className="mt-1 text-xs text-slate-400">
           See GOING_LIVE.md at the repo root for how to get these values from Meta and connect a real number.
         </p>
+        <div className="mt-3">
+          <label className="block text-xs font-medium text-slate-500">Commerce Catalog ID (optional)</label>
+          <input
+            value={whatsappCatalogId}
+            onChange={(e) => setWhatsappCatalogId(e.target.value)}
+            placeholder="e.g. 1234567890123456"
+            autoComplete="off"
+            data-1p-ignore
+            className="w-full max-w-sm rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            From Meta Commerce Manager, once a product catalog is created and connected to this business&apos;s
+            WhatsApp Business Account. Only needed for features that send WhatsApp&apos;s native product carousel
+            (e.g. the jewellery design carousel) -- leave blank otherwise; those features fall back to a plain
+            image-based carousel automatically.
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
@@ -833,7 +866,7 @@ export default function RestaurantsPage() {
       const restaurant = await apiFetch<RestaurantCreateResult>("/restaurants", {
         method: "POST",
         body: JSON.stringify({
-          name, slug, niche_code: nicheCode || null, is_demo: isDemo,
+          name, slug, niche_code: nicheCode === LEGACY_OPTION ? null : nicheCode, is_demo: isDemo,
           feature_package_id: featurePackageId || null,
         }),
       });
@@ -895,18 +928,24 @@ export default function RestaurantsPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-500">Business type</label>
+              <label className="block text-xs font-medium text-slate-500">
+                Business type <span className="text-red-500">*</span>
+              </label>
               <select
+                required
                 value={nicheCode}
                 onChange={(e) => setNicheCode(e.target.value)}
                 className="w-56 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               >
-                <option value="">Custom / Legacy (restaurant menu builder)</option>
+                <option value="" disabled>
+                  Select a business type…
+                </option>
                 {nicheTemplates.map((t) => (
                   <option key={t.code} value={t.code}>
                     {t.icon} {t.name}
                   </option>
                 ))}
+                <option value={LEGACY_OPTION}>⚙️ Custom / Legacy (restaurant menu builder)</option>
               </select>
             </div>
             <div>
@@ -938,8 +977,9 @@ export default function RestaurantsPage() {
           </div>
           <p className="mt-2 text-xs text-slate-400">
             Just type a name — the owner&apos;s dashboard login is created automatically. Only touch the URL slug if you want something different.
-            {" "}Pick a business type to auto-fill a ready-to-go menu/services catalog and WhatsApp conversation flow —
-            leave it on Custom/Legacy for the original restaurant-only menu builder.
+            {" "}Business type is required: pick one of the 12 industries to auto-fill a ready-to-go catalog, terminology, and WhatsApp
+            conversation flow for it, or deliberately choose &quot;Custom / Legacy&quot; for the original restaurant-only menu builder —
+            there&apos;s no silent default either way.
           </p>
         </form>
       )}
@@ -969,6 +1009,14 @@ export default function RestaurantsPage() {
                         Demo
                       </span>
                     )}
+                    {!r.uses_generic_engine && (
+                      <span
+                        className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                        title="Original restaurant-only engine -- no Flow Builder / Bot Preview / niche terminology. Use Bot Builder / Home Builder for this one instead. Easy to confuse with a similarly-named niche business below, so flagged here."
+                      >
+                        Legacy
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-slate-500">{r.slug}</td>
                   <td className="px-4 py-3">
@@ -977,6 +1025,13 @@ export default function RestaurantsPage() {
                   <td className="px-4 py-3">
                     {r.whatsapp_phone_number_id ? (
                       <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Connected</span>
+                    ) : r.demo_sends_via_restaurant_id ? (
+                      <span
+                        className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700"
+                        title="No WhatsApp number of its own -- sends and receives through the Flagship number's industry picker instead."
+                      >
+                        Connected (via Flagship)
+                      </span>
                     ) : (
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Not configured</span>
                     )}

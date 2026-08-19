@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     # WHATSAPP_APP_SECRET below -- optional observability, not a hard requirement to boot.
     SENTRY_DSN: str = ""
 
+    # Unsplash API access key, read only by app/scripts/jewellery/download_jewellery_assets.py
+    # to seed the JewelleryDesign reference catalog. Unlike SMTP_HOST/SENTRY_DSN above,
+    # an unset value here is NOT a silent no-op: the downloader script has no fallback
+    # behavior without it and raises loudly instead of running with no key. Get a free
+    # key at unsplash.com/developers.
+    UNSPLASH_ACCESS_KEY: str = ""
+
 
 # Placeholder strings that used to be hardcoded, functional defaults for the secrets
 # above. Kept only so the production startup check (app/main.py) can catch an operator

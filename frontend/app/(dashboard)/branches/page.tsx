@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import type { Branch } from "@/lib/types";
+import { IconMapPin } from "@/components/icons";
 
 function BranchesForRestaurant({ restaurantId }: { restaurantId: string }) {
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -178,7 +179,11 @@ function BranchesForRestaurant({ restaurantId }: { restaurantId: string }) {
             <tbody>
               {branches.map((b) => (
                 <tr key={b.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                  <td className="px-4 py-3 font-medium text-slate-800">📍 {b.name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-800">
+                    <span className="flex items-center gap-1.5">
+                      <IconMapPin size={13} className="text-slate-400" /> {b.name}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-slate-500">{b.address || "-"}</td>
                   <td className="px-4 py-3 text-slate-500">{b.phone || "-"}</td>
                   <td className="px-4 py-3 text-slate-500">
@@ -194,8 +199,14 @@ function BranchesForRestaurant({ restaurantId }: { restaurantId: string }) {
                         </button>
                       </div>
                     ) : (
-                      <button onClick={() => startEditCoords(b)} className="text-xs font-medium text-primary hover:underline">
-                        {b.latitude != null && b.longitude != null ? `📌 ${b.latitude.toFixed(4)}, ${b.longitude.toFixed(4)}` : "Set map pin"}
+                      <button onClick={() => startEditCoords(b)} className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                        {b.latitude != null && b.longitude != null ? (
+                          <>
+                            <IconMapPin size={11} /> {b.latitude.toFixed(4)}, {b.longitude.toFixed(4)}
+                          </>
+                        ) : (
+                          "Set map pin"
+                        )}
                       </button>
                     )}
                   </td>

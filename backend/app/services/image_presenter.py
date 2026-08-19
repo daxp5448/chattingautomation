@@ -8,7 +8,8 @@ consumer: this file). Every result is already filtered to active images and sort
 import uuid
 from dataclasses import dataclass
 
-from app.models.catalog import CatalogItem
+from app.models.catalog import CatalogCategory, CatalogItem
+from app.models.flow_definition import FlowDefinition
 from app.repositories.image_repository import ImageRepository
 from app.services import image_storage_service
 
@@ -57,3 +58,55 @@ async def resolve_item_images_bulk(session, items: list[CatalogItem], restaurant
         resolved = _current_images(by_item.get(item.id, []))
         result[item.id] = resolved if resolved else [ItemImage(url=u) for u in (item.images or [])]
     return result
+
+
+async def resolve_category_images(session, category: CatalogCategory, restaurant_id: uuid.UUID) -> list[ItemImage]:
+    """Same resolution as resolve_item_images, but for a category's own gallery (curated
+    Image rows) -- falls back to the legacy single `CatalogCategory.image_url` string
+    column so a category with no Image rows yet still shows whatever it already had.
+    """
+    images = await ImageRepository(session).list_for_catalog_category(category.id, restaurant_id)
+    resolved = _current_images(images)
+    if resolved:
+        return resolved
+    return [ItemImage(url=category.image_url)] if category.image_url else []
+
+
+async def resolve_category_images_bulk(session, categories: list[CatalogCategory], restaurant_id: uuid.UUID) -> dict[uuid.UUID, list[ItemImage]]:
+    """Batched sibling of resolve_category_images -- one query for every category in
+    `categories`, used by generic_flow_engine.py's `_resolve_options`/photo-burst gating
+    for a "Categories" step, which needs every option's image up front.
+    """
+    all_images = await ImageRepository(session).list_for_catalog_categories([c.id for c in categories], restaurant_id)
+    by_category: dict[uuid.UUID, list] = {}
+    for img in all_images:
+        by_category.setdefault(img.catalog_category_id, []).append(img)
+
+    result: dict[uuid.UUID, list[ItemImage]] = {}
+    for category in categories:
+        resolved = _current_images(by_category.get(category.id, []))
+        result[category.id] = resolved if resolved else ([ItemImage(url=category.image_url)] if category.image_url else [])
+    return result
+
+
+async def resolve_step_images(session, flow_definition_id: uuid.UUID, step_id: str, restaurant_id: uuid.UUID) -> list[ItemImage]:
+    """Images curated directly on a flow step (a welcome banner, a gallery step) -- distinct
+    from item/category images, which a step only shows via `buttons_from`/`item_context_key`
+    (see generic_flow_engine.py::_image_for_step). No JSON fallback: a step has no legacy
+    single-image field, so an empty list here means "nothing curated for this step."
+    """
+    images = await ImageRepository(session).list_for_flow_step(flow_definition_id, step_id, restaurant_id)
+    return _current_images(images)
+
+
+async def resolve_step_images_bulk(session, flow_definition_id: uuid.UUID, restaurant_id: uuid.UUID) -> dict[str, list[ItemImage]]:
+    """Batched sibling of resolve_step_images -- one query for every step-image in a whole
+    flow, used by the Flow Builder/Bot Preview so opening a flow doesn't issue one query
+    per step.
+    """
+    all_images = await ImageRepository(session).list_for_flow_definition(flow_definition_id, restaurant_id)
+    by_step: dict[str, list] = {}
+    for img in all_images:
+        if img.flow_step_id:
+            by_step.setdefault(img.flow_step_id, []).append(img)
+    return {step_id: _current_images(imgs) for step_id, imgs in by_step.items()}

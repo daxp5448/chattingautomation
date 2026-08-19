@@ -45,6 +45,17 @@ class Restaurant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     whatsapp_business_account_id: Mapped[str | None] = mapped_column(String(50))
     whatsapp_access_token_encrypted: Mapped[str | None] = mapped_column(String(2000))
     whatsapp_verify_token: Mapped[str | None] = mapped_column(String(200))
+    # Meta/Facebook Commerce Catalog id connected to this business's WABA, needed for the
+    # real native WhatsApp "Multi-Product Message" (swipeable product_list carousel --
+    # see OutboundMessage.product_list in app/services/whatsapp_client.py). NULL for
+    # every restaurant today (nobody has a Commerce Catalog connected yet) -- purely
+    # additive groundwork, same non-breaking-by-default bias as whatsapp_flow_order_id
+    # above: until an Owner/Super Admin explicitly sets this, nothing changes.
+    # app/services/generic_flow_engine.py::_render_jewellery_gallery only takes the
+    # native product_list branch when this is set AND at least one design on the current
+    # page has a JewelleryDesign.meta_retailer_id -- otherwise it falls through to the
+    # existing sequential-image carousel completely unchanged.
+    whatsapp_catalog_id: Mapped[str | None] = mapped_column(String(50))
 
     # Native WhatsApp Flow ordering (see the approved "WhatsApp Flows for Ordering" plan) --
     # both NULL means off, same bias as enabled_features/uses_generic_engine: every

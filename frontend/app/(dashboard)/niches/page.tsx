@@ -9,23 +9,41 @@ import type { ApiEndpoint, DemoBotStatus, FlowStep, NicheCatalogCategory, NicheC
 
 function DemoBotPanel() {
   const [status, setStatus] = useState<DemoBotStatus | null>(null);
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionError, setProvisionError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     apiFetch<DemoBotStatus>("/restaurants/demo-bot-status")
       .then(setStatus)
       .catch(() => setStatus(null)); // non-fatal -- this panel is purely informational
-  }, []);
+  };
+
+  useEffect(load, []);
 
   if (!status) return null;
 
   const missing = status.niches.filter((n) => !n.has_demo_restaurant);
 
+  const provisionMissing = async () => {
+    setProvisioning(true);
+    setProvisionError(null);
+    try {
+      const next = await apiFetch<DemoBotStatus>("/restaurants/demo-bot-status/provision", { method: "POST" });
+      setStatus(next);
+    } catch (err) {
+      setProvisionError(err instanceof ApiError ? err.message : "Failed to provision niches.");
+    } finally {
+      setProvisioning(false);
+    }
+  };
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-800">Industry Picker</h2>
+    <div id="flagship-number" className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="text-sm font-semibold text-slate-800">Flagship Number &mdash; Industry Picker</h2>
       <p className="mt-1 text-xs text-slate-500">
-        A WhatsApp number prospects can message to try any niche's bot -- either a dedicated Demo Bot business
-        (see Businesses), or any real business with Industry Picker Mode turned on from its Manage page.
+        The platform's one entry-point WhatsApp number: a customer says &quot;Hi&quot;, picks an industry, and gets
+        a live, fully-configured showcase of that niche's real flow &mdash; either a dedicated Demo Bot business
+        (see Businesses) or any real business with Industry Picker Mode turned on from its Manage page.
       </p>
       <p className="mt-3 text-sm">
         Entry point:{" "}
@@ -39,13 +57,22 @@ function DemoBotPanel() {
         )}
       </p>
       <p className="mt-1 text-sm text-slate-600">
-        {status.niches.length - missing.length} / {status.niches.length} niches have a demo business provisioned.
+        {status.niches.length - missing.length} / {status.niches.length} niches have a showcase business
+        provisioned.
       </p>
       {missing.length > 0 && (
-        <p className="mt-1 text-xs text-slate-400">
-          Missing: {missing.map((n) => n.name).join(", ")} -- runs automatically on the next deploy
-          (python -m app.scripts.seed_demo_restaurants).
-        </p>
+        <div className="mt-2">
+          <p className="text-xs text-slate-400">Missing: {missing.map((n) => n.name).join(", ")}</p>
+          <button
+            type="button"
+            onClick={provisionMissing}
+            disabled={provisioning || !status.sentinel_configured}
+            className="mt-2 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          >
+            {provisioning ? "Provisioning..." : "Provision missing niches now"}
+          </button>
+          {provisionError && <p className="mt-1 text-xs text-red-600">{provisionError}</p>}
+        </div>
       )}
     </div>
   );
@@ -245,6 +272,128 @@ function CatalogEditor({
   );
 }
 
+// Purely display copy read by generic_flow_engine.py's notify_business() and every
+// niche-aware label in the admin UI (e.g. frontend/app/(dashboard)/layout.tsx's sidebar,
+// the Orders/Bookings/Leads page) -- see backend/app/models/niche_template.py's
+// terminology field docstring for the exact shape this mirrors.
+const STATUS_KEYS = ["new", "confirmed", "in_progress", "completed", "cancelled"] as const;
+const STATUS_KEY_HINTS: Record<string, string> = {
+  new: "New", confirmed: "Confirmed", in_progress: "In Progress", completed: "Completed", cancelled: "Cancelled",
+};
+
+function TerminologyEditor({ terminology, onChange }: { terminology: Record<string, unknown>; onChange: (next: Record<string, unknown>) => void }) {
+  const statusLabels = (terminology.status_labels as Record<string, string>) || {};
+
+  function setField(key: string, value: string) {
+    onChange({ ...terminology, [key]: value });
+  }
+  function setStatusLabel(key: string, value: string) {
+    onChange({ ...terminology, status_labels: { ...statusLabels, [key]: value } });
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {([
+          ["catalog_label", "Catalog label", "e.g. Menu, Services, Collection"],
+          ["category_label", "Category label", "e.g. Category, Service Type"],
+          ["item_label", "Item label", "e.g. Dish, Service, Piece"],
+          ["staff_label", "Staff label", "e.g. Waiter, Stylist, Doctor"],
+        ] as const).map(([key, label, placeholder]) => (
+          <div key={key}>
+            <label className="block text-xs font-medium text-slate-500">{label}</label>
+            <input
+              value={(terminology[key] as string) || ""}
+              onChange={(e) => setField(key, e.target.value)}
+              placeholder={placeholder}
+              className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+        ))}
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-slate-500">Status labels (shown to customers/staff for each engagement status)</label>
+        <div className="mt-1 grid grid-cols-2 gap-2 sm:grid-cols-5">
+          {STATUS_KEYS.map((key) => (
+            <div key={key}>
+              <label className="block text-[10px] text-slate-400">{STATUS_KEY_HINTS[key]}</label>
+              <input
+                value={statusLabels[key] || ""}
+                onChange={(e) => setStatusLabel(key, e.target.value)}
+                placeholder={STATUS_KEY_HINTS[key]}
+                className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Only "staff_selection" exists across the current 12 niches today (see
+// niche_seeds/*.py) -- this stays generic (any key, not a hardcoded checkbox list) since
+// a new flow step can declare an arbitrary `skip_if_module_off` key without a code
+// change here, matching how the backend's own module-skip logic
+// (generic_flow_engine.py::_Engine._advance) treats module keys generically too.
+const KNOWN_MODULE_HINTS: Record<string, string> = {
+  staff_selection: "Staff selection -- let customers pick who they want, or skip straight to date/time",
+};
+
+function humanizeModuleKey(key: string): string {
+  return KNOWN_MODULE_HINTS[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function ModulesEditor({ modules, onChange }: { modules: Record<string, boolean>; onChange: (next: Record<string, boolean>) => void }) {
+  const [newKey, setNewKey] = useState("");
+  const entries = Object.entries(modules);
+
+  function toggle(key: string) {
+    onChange({ ...modules, [key]: !modules[key] });
+  }
+  function remove(key: string) {
+    const next = { ...modules };
+    delete next[key];
+    onChange(next);
+  }
+  function addModule() {
+    const key = newKey.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!key || key in modules) return;
+    onChange({ ...modules, [key]: true });
+    setNewKey("");
+  }
+
+  return (
+    <div className="space-y-2">
+      {entries.length === 0 && (
+        <p className="text-xs text-slate-400">No module toggles configured -- every optional flow step (e.g. staff selection) runs by default.</p>
+      )}
+      {entries.map(([key, value]) => (
+        <div key={key} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-1.5">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={!!value} onChange={() => toggle(key)} className="rounded border-slate-300" />
+            {humanizeModuleKey(key)}
+          </label>
+          <button type="button" onClick={() => remove(key)} className="text-xs font-medium text-red-500 hover:underline">
+            Remove
+          </button>
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <input
+          value={newKey}
+          onChange={(e) => setNewKey(e.target.value)}
+          placeholder="module_key (e.g. deposit_payment)"
+          className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+        />
+        <button type="button" onClick={addModule} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+          + Add module
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TemplateEditor({
   template, apiEndpoints, onSaved,
 }: {
@@ -265,8 +414,15 @@ function TemplateEditor({
   // structured editor changes `catalog` again (which resets this back to null).
   const [catalogRawEdit, setCatalogRawEdit] = useState<string | null>(null);
   const [catalogRawError, setCatalogRawError] = useState<string | null>(null);
-  const [terminologyJson, setTerminologyJson] = useState(jsonField(template.terminology));
-  const [modulesJson, setModulesJson] = useState(jsonField(template.default_modules));
+  // Same structured-editor-is-the-source-of-truth-with-a-raw-JSON-escape-hatch pattern as
+  // catalog above -- terminology/modules used to be JSON-textarea-only (a non-technical
+  // Super Admin had to hand-edit JSON just to rename "Menu" to "Services").
+  const [terminology, setTerminology] = useState<Record<string, unknown>>(template.terminology || {});
+  const [terminologyRawEdit, setTerminologyRawEdit] = useState<string | null>(null);
+  const [terminologyRawError, setTerminologyRawError] = useState<string | null>(null);
+  const [modules, setModules] = useState<Record<string, boolean>>((template.default_modules as Record<string, boolean>) || {});
+  const [modulesRawEdit, setModulesRawEdit] = useState<string | null>(null);
+  const [modulesRawError, setModulesRawError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -281,16 +437,29 @@ function TemplateEditor({
     setCatalogRawError(null);
   }
 
+  function setTerminologyFromStructured(next: Record<string, unknown>) {
+    setTerminology(next);
+    setTerminologyRawEdit(null);
+    setTerminologyRawError(null);
+  }
+
+  function setModulesFromStructured(next: Record<string, boolean>) {
+    setModules(next);
+    setModulesRawEdit(null);
+    setModulesRawError(null);
+  }
+
   async function save() {
     setSaving(true);
     setError(null);
     try {
       let defaultCatalog: NicheCatalogCategory[] = catalog;
-      let terminology, defaultModules;
+      let finalTerminology: Record<string, unknown> = terminology;
+      let finalModules: Record<string, boolean> = modules;
       try {
         if (catalogRawEdit !== null) defaultCatalog = JSON.parse(catalogRawEdit);
-        terminology = JSON.parse(terminologyJson);
-        defaultModules = JSON.parse(modulesJson);
+        if (terminologyRawEdit !== null) finalTerminology = JSON.parse(terminologyRawEdit);
+        if (modulesRawEdit !== null) finalModules = JSON.parse(modulesRawEdit);
       } catch {
         setError("One of the JSON fields below isn't valid JSON -- fix the syntax and try again.");
         setSaving(false);
@@ -301,7 +470,7 @@ function TemplateEditor({
         body: JSON.stringify({
           name, action_type: actionType, icon: icon || null, welcome_message: welcomeMessage,
           welcome_banner_image: welcomeBannerImage || null,
-          default_catalog: defaultCatalog, terminology, default_modules: defaultModules,
+          default_catalog: defaultCatalog, terminology: finalTerminology, default_modules: finalModules,
         }),
       });
       onSaved();
@@ -369,6 +538,29 @@ function TemplateEditor({
       </div>
 
       <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
+        <p className="text-xs font-medium text-slate-600">Terminology</p>
+        <p className="mt-1 text-xs text-slate-400">
+          What this niche calls things -- drives the sidebar, message templates, and staff-facing labels for
+          every business on this niche. Leave a field blank to fall back to the generic default.
+        </p>
+        <div className="mt-2">
+          <TerminologyEditor terminology={terminology} onChange={setTerminologyFromStructured} />
+        </div>
+      </div>
+
+      <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
+        <p className="text-xs font-medium text-slate-600">Capabilities / modules</p>
+        <p className="mt-1 text-xs text-slate-400">
+          Optional flow steps a business on this niche can turn on or off (see each step&apos;s &quot;skip if
+          module off&quot; setting in Flow Builder). Copied onto a business at creation and independently
+          editable after.
+        </p>
+        <div className="mt-2">
+          <ModulesEditor modules={modules} onChange={setModulesFromStructured} />
+        </div>
+      </div>
+
+      <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
         <p className="text-xs font-medium text-slate-600">Default flow</p>
         <p className="mt-1 text-xs text-slate-400">
           What a new business starts with -- drag to arrange, click a step to edit it, drag from a node&apos;s
@@ -424,11 +616,39 @@ function TemplateEditor({
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500">terminology</label>
-            <textarea rows={4} value={terminologyJson} onChange={(e) => setTerminologyJson(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-xs" />
+            <textarea
+              rows={4}
+              value={terminologyRawEdit ?? jsonField(terminology)}
+              onChange={(e) => {
+                setTerminologyRawEdit(e.target.value);
+                try {
+                  setTerminology(JSON.parse(e.target.value));
+                  setTerminologyRawError(null);
+                } catch {
+                  setTerminologyRawError("Not valid JSON yet -- the structured editor above won't update until this parses.");
+                }
+              }}
+              className="w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-xs"
+            />
+            {terminologyRawError && <p className="mt-1 text-xs text-amber-600">{terminologyRawError}</p>}
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500">default_modules</label>
-            <textarea rows={3} value={modulesJson} onChange={(e) => setModulesJson(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-xs" />
+            <textarea
+              rows={3}
+              value={modulesRawEdit ?? jsonField(modules)}
+              onChange={(e) => {
+                setModulesRawEdit(e.target.value);
+                try {
+                  setModules(JSON.parse(e.target.value));
+                  setModulesRawError(null);
+                } catch {
+                  setModulesRawError("Not valid JSON yet -- the structured editor above won't update until this parses.");
+                }
+              }}
+              className="w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-xs"
+            />
+            {modulesRawError && <p className="mt-1 text-xs text-amber-600">{modulesRawError}</p>}
           </div>
         </div>
       </details>

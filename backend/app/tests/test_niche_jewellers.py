@@ -231,18 +231,23 @@ async def test_full_enquiry_flow_with_back_navigation(db_session, jewellers_tena
     assert float(diamond_ring.price) == 65000
 
     # --- 1. "Hi" -> welcome + 6 options, entry point, no Back ------------------------------
+    # "welcome:explore_design" (-> the isolated jewellery visual carousel, see
+    # test_jewellery_carousel.py) is first -- the old "welcome:explore"/"Explore
+    # Collection" button was removed as a redundant duplicate of it. "Book Appointment"
+    # is now the sole entry point into the enquiry flow below, which is otherwise
+    # unchanged.
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "Hi", profile_name=CUSTOMER_PROFILE_NAME)
     welcome_options = _extract_options(_last_interactive(sender))
     assert [o["id"] for o in welcome_options] == [
-        "welcome:explore", "welcome:appointment", "welcome:offers", "welcome:store", "welcome:contact", "welcome:human",
+        "welcome:explore_design", "welcome:appointment", "welcome:offers", "welcome:store", "welcome:contact", "welcome:human",
     ]
     customer = await _get_customer(db_session, restaurant.id)
     assert customer.name == CUSTOMER_PROFILE_NAME  # auto-pulled from the WhatsApp profile
     state = await _get_state(db_session, customer.id)
     assert state.current_step == "welcome"
 
-    # --- 2. "Explore Collection" -> category list [Back -> Welcome] -----------------------
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:explore")
+    # --- 2. "Book Appointment" -> category list [Back -> Welcome] -------------------------
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:appointment")
     state = await _get_state(db_session, customer.id)
     assert state.current_step == "category_select"
     category_options = _extract_options(_last_interactive(sender))
@@ -256,7 +261,7 @@ async def test_full_enquiry_flow_with_back_navigation(db_session, jewellers_tena
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, generic_flow_engine.BACK_REPLY_ID)
     state = await _get_state(db_session, customer.id)
     assert state.current_step == "welcome"
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:explore")
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:appointment")
     state = await _get_state(db_session, customer.id)
     assert state.current_step == "category_select"
 
@@ -432,7 +437,7 @@ async def test_visit_skip_goes_straight_to_requirements(db_session, jewellers_te
     diamond_ring = await _get_item(db_session, restaurant.id, "Diamond Ring")
 
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hi", profile_name=CUSTOMER_PROFILE_NAME)
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:explore")
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:appointment")
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"category:{diamond_category_id}")
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"item:{diamond_ring.id}")
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "piece:enquire")
@@ -454,7 +459,7 @@ async def test_name_edit_branch_captures_override_and_continues(db_session, jewe
     gold_necklace = await _get_item(db_session, restaurant.id, "Gold Necklace")
 
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "hello", profile_name=CUSTOMER_PROFILE_NAME)
-    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:explore")
+    await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "welcome:appointment")
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"category:{gold_category_id}")
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, f"item:{gold_necklace.id}")
     await _tap(db_session, sender, restaurant, CUSTOMER_PHONE, "piece:enquire")

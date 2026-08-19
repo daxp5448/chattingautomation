@@ -5,6 +5,7 @@ import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import { useCurrentRestaurant } from "@/lib/restaurant";
 import type { Coupon } from "@/lib/types";
+import { IconTag } from "@/components/icons";
 
 function NotIncludedNotice() {
   return (
@@ -153,7 +154,11 @@ function CouponsForRestaurant({ restaurantId }: { restaurantId: string }) {
             <tbody>
               {coupons.map((c) => (
                 <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                  <td className="px-4 py-3 font-mono font-medium text-slate-800">🏷️ {c.code}</td>
+                  <td className="px-4 py-3 font-mono font-medium text-slate-800">
+                    <span className="flex items-center gap-1.5">
+                      <IconTag size={13} className="text-slate-400" /> {c.code}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-slate-500">{c.type}</td>
                   <td className="px-4 py-3 text-slate-700">{c.type === "percentage" ? `${c.value}%` : c.value}</td>
                   <td className="px-4 py-3 text-slate-500">{c.min_order_amount}</td>

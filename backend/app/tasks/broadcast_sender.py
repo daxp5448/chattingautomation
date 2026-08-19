@@ -66,7 +66,7 @@ async def _send_broadcast_campaign(campaign_id: str) -> dict:
         template = await session.get(WhatsAppTemplate, campaign.template_id)
         if restaurant is None or template is None:
             campaign.status = BroadcastStatus.FAILED
-            campaign.failure_reason = "Restaurant or template no longer exists"
+            campaign.failure_reason = "Business or template no longer exists"
             campaign.completed_at = utcnow()
             await session.commit()
             return {"sent": 0, "failed": 0, "skipped": 0}

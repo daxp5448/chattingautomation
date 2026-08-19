@@ -71,8 +71,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from cachetools import TTLCache
 from sqlalchemy.exc import IntegrityError
 
+from app.core.config import settings
 from app.core.security import decrypt_secret
 from app.core.ws_manager import manager as ws_manager
 from app.models.customer import Customer
@@ -86,8 +88,15 @@ from app.repositories.engagement_repository import EngagementRepository
 from app.repositories.flow_definition_repository import FlowDefinitionRepository
 from app.services import analytics
 from app.repositories.generic_conversation_repository import GenericConversationStateRepository
+from app.repositories.jewellery_design_repository import JewelleryDesignRepository
 from app.repositories.staff_member_repository import StaffMemberRepository
-from app.services.image_presenter import resolve_item_images, resolve_item_images_bulk
+from app.services.image_presenter import (
+    resolve_category_images,
+    resolve_category_images_bulk,
+    resolve_item_images,
+    resolve_item_images_bulk,
+    resolve_step_images,
+)
 from app.services.notification_service import notify_business
 from app.services.template_engine import render_template
 from app.services.whatsapp_client import OutboundMessage, WhatsAppSender
@@ -96,6 +105,13 @@ logger = logging.getLogger(__name__)
 
 BACK_REPLY_ID = "__back__"
 SKIP_REPLY_ID = "__skip__"
+# Jewellery-only carousel feature (Material -> Category -> paginated Design gallery, see
+# JewelleryDesignRepository / _render_jewellery_gallery below): the one new reserved
+# control id, handled the same way BACK_REPLY_ID is -- intercepted in handle() before
+# normal _process_input dispatch, since "load the next page" isn't a catalog option any
+# step's _resolve_options would ever return. Every other niche's flow never emits this
+# id, so this is a no-op for them.
+JEWELLERY_LOAD_MORE_REPLY_ID = "__jewellery_more__"
 
 _GREETING_WORDS = {"hi", "hello", "hey", "hii", "hola", "start", "menu", "yo", "sup", "namaste"}
 _PLACEHOLDER_IMAGE = "https://placehold.co/600x400?text={label}"
@@ -123,6 +139,16 @@ _MAX_AUTO_ADVANCE_HOPS = 10
 # MAX_DELAY_SECONDS_PER_STEP for the complementary per-step sanity ceiling checked at
 # save time.
 _MAX_TOTAL_BLOCKING_SECONDS = 5.0
+
+# In-memory fast-path for redelivered wa_message_ids -- Meta redelivers a webhook when it
+# doesn't see our 200 fast enough, so the exact-duplicate case is common, not rare. This
+# is purely an ADDITIONAL fast path in front of the real dedup below (the DB SELECT +
+# Message.wa_message_id's actual unique constraint, which remains the source of truth):
+# a cache miss just falls through to that unchanged existing check, so losing this cache
+# entirely (process restart, eviction) can never cause a duplicate send, only a slightly
+# slower rejection of a dupe. maxsize bounds memory under sustained traffic; ttl only
+# needs to outlast Meta's redelivery window (a small number of seconds in practice).
+_recent_wa_message_ids: TTLCache = TTLCache(maxsize=10_000, ttl=300)
 
 # EngagementType -> the funnel event _create_engagement fires at the start/success of a
 # confirm_action, per app/services/analytics.py's vocabulary. ORDER has no distinct
@@ -162,9 +188,21 @@ _CONDITION_OPERATORS = {
 # right after a demo customer picks that niche, rather than duplicating a "just render
 # the entry step" code path. Changing this word list/logic affects that too.
 def _looks_like_greeting(text: str) -> bool:
+    # Bug fixed here: stripping non-letter characters before checking for emptiness used
+    # to mean ANY reply with no Latin letters at all -- a bare number ("5", typed as a
+    # custom quantity), an emoji, or text in a non-Latin script -- normalized down to "",
+    # which `if not normalized: return True` then treated as "looks like a greeting" and
+    # reset the WHOLE conversation back to the entry step. That's the exact mechanism
+    # behind "I typed a custom quantity number and it restarted from the beginning" --
+    # reproducible on every niche, since this check runs unconditionally on every inbound
+    # text message before any per-step handling. Only a genuinely blank/whitespace-only
+    # message counts as empty now; a message with real content but no Latin letters falls
+    # through to per-step processing like it always should have.
+    if not text or not text.strip():
+        return True
     normalized = re.sub(r"[^a-z\s]", "", text.lower()).strip()
     if not normalized:
-        return True
+        return False
     words = normalized.split()
     return len(words) <= 2 and all(w in _GREETING_WORDS for w in words)
 
@@ -211,6 +249,11 @@ async def process_inbound_message(
     """
     message_repo = _GenericMessageRepo(session)
     if wa_message_id:
+        if wa_message_id in _recent_wa_message_ids:
+            # Fast path hit -- skip the DB round-trip entirely for a redelivery we've
+            # already durably recorded. A miss here (cold cache, evicted, different
+            # process) just falls through to the exact same check as before.
+            return
         existing = await message_repo.get_by_wa_message_id(wa_message_id)
         if existing is not None:
             return
@@ -280,11 +323,19 @@ async def process_inbound_message(
             from_phone, "This business hasn't finished setting up its WhatsApp bot yet. Please check back soon."
         ))
         await session.commit()
+        if wa_message_id:
+            _recent_wa_message_ids[wa_message_id] = True
         return
 
     engine = _Engine(session, sender, dry_run=dry_run)
     await engine.handle(restaurant, customer, state, from_phone, flow_def, interaction)
     await session.commit()
+    if wa_message_id:
+        # Marked only after a successful commit -- if anything above raised/rolled back,
+        # the DB genuinely never recorded this id, so a real redelivery must still be
+        # allowed through (this cache is a fast path, never a substitute for the DB
+        # constraint that's the actual source of truth).
+        _recent_wa_message_ids[wa_message_id] = True
 
 
 async def preview_jump_to_step(session, sender: WhatsAppSender, restaurant: Restaurant, from_phone: str, step_id: str) -> None:
@@ -328,6 +379,7 @@ async def preview_jump_to_step(session, sender: WhatsAppSender, restaurant: Rest
     await session.flush()
 
     engine = _Engine(session, sender, dry_run=True)
+    engine.flow_id = flow_def.id
     await engine._render_step(restaurant, customer, state, from_phone, step, steps_by_id)
     await session.commit()
 
@@ -347,32 +399,68 @@ class _GenericMessageRepo:
 
 
 async def send_generic_message(session, sender: WhatsAppSender, restaurant: Restaurant, customer_id: uuid.UUID, to: str, message: OutboundMessage) -> None:
-    # A per-niche demo restaurant owns no real WhatsApp number of its own (see
-    # app/models/restaurant.py::demo_sends_via_restaurant_id) -- it sends through the one
-    # sentinel Demo Bot restaurant's real credentials instead. NULL for every real
-    # restaurant, so this is a no-op lookup and behavior is byte-for-byte unchanged for
-    # them. Resolved here (not mutated onto `restaurant` itself) because this function
-    # commits mid-request elsewhere in the call chain -- writing real credentials onto a
-    # demo restaurant's own in-memory row would risk them being flushed to that row
-    # permanently, which is exactly what this avoids.
+    await send_generic_messages_batch(session, sender, restaurant, customer_id, to, [message])
+
+
+async def send_generic_messages_batch(
+    session, sender: WhatsAppSender, restaurant: Restaurant, customer_id: uuid.UUID, to: str, messages: list[OutboundMessage]
+) -> None:
+    """Same per-message behavior as send_generic_message, for a whole list at once.
+
+    Sent SEQUENTIALLY, in list order -- NOT concurrently. This used to fire every message
+    at once via asyncio.gather for speed, but that broke ordering in practice: Meta must
+    fetch and validate an image's URL before accepting an image message, which takes
+    measurably longer than accepting a plain text/interactive message, so a text/options
+    message dispatched at the same instant as an image reliably WINS the race and arrives
+    to the customer first -- confirmed live (an interactive list showed up before its own
+    accompanying image). Since arrival order can't actually be controlled once two sends
+    are in flight concurrently, and image-before-options is the real requirement, this
+    goes back to sequential -- awaiting each in order guarantees the image's API call has
+    already returned before the next one is even issued. This is still fast: the earlier
+    ~10s stacking was from GraphAPIWhatsAppSender opening a brand new TCP+TLS connection
+    per call (see its docstring), not from sequential awaiting itself -- with a persistent,
+    reused connection, two or three sequential sends are a fraction of a second apart.
+
+    Credential resolution (the one session-bound read here) happens once up front, and DB
+    logging happens only after every send has returned.
+
+    A per-niche demo restaurant owns no real WhatsApp number of its own (see
+    app/models/restaurant.py::demo_sends_via_restaurant_id) -- it sends through the one
+    sentinel Demo Bot restaurant's real credentials instead. NULL for every real
+    restaurant, so this is a no-op lookup and behavior is byte-for-byte unchanged for
+    them. Resolved here (not mutated onto `restaurant` itself) because this function
+    commits mid-request elsewhere in the call chain -- writing real credentials onto a
+    demo restaurant's own in-memory row would risk them being flushed to that row
+    permanently, which is exactly what this avoids.
+    """
+    if not messages:
+        return
     send_via = restaurant
     if restaurant.demo_sends_via_restaurant_id:
         send_via = await session.get(Restaurant, restaurant.demo_sends_via_restaurant_id)
     access_token = decrypt_secret(send_via.whatsapp_access_token_encrypted or "")
-    try:
-        await sender.send(send_via.whatsapp_phone_number_id or "", access_token, message)
-    except Exception:
-        logger.warning("Generic-engine WhatsApp send failed for restaurant %s", restaurant.id, exc_info=True)
-    body = message.payload.get("text", {}).get("body") or message.payload.get("image", {}).get("caption") or "[message]"
-    session.add(
-        Message(
-            restaurant_id=restaurant.id,
-            customer_id=customer_id,
-            direction=MessageDirection.OUTBOUND,
-            sent_by=MessageSender.BOT,
-            body=body[:4096],
+    phone_number_id = send_via.whatsapp_phone_number_id or ""
+
+    async def _send_one(message: OutboundMessage) -> None:
+        try:
+            await sender.send(phone_number_id, access_token, message)
+        except Exception:
+            logger.warning("Generic-engine WhatsApp send failed for restaurant %s", restaurant.id, exc_info=True)
+
+    for message in messages:
+        await _send_one(message)
+
+    for message in messages:
+        body = message.payload.get("text", {}).get("body") or message.payload.get("image", {}).get("caption") or "[message]"
+        session.add(
+            Message(
+                restaurant_id=restaurant.id,
+                customer_id=customer_id,
+                direction=MessageDirection.OUTBOUND,
+                sent_by=MessageSender.BOT,
+                body=body[:4096],
+            )
         )
-    )
 
 
 class _Engine:
@@ -390,6 +478,11 @@ class _Engine:
         # records a real analytics event, and never broadcasts a live-chat websocket
         # signal for what is, by construction, not a real customer.
         self.dry_run = dry_run
+        # Set by handle()/preview_jump_to_step (the only two entry points that construct
+        # an _Engine) before any rendering happens -- lets _step_gallery resolve curated
+        # per-step images (app/services/image_presenter.py::resolve_step_images) without
+        # threading flow_def through every render/send helper's signature.
+        self.flow_id: uuid.UUID | None = None
 
     def _record_event(self, restaurant_id, event_type, **kwargs) -> None:
         if self.dry_run:
@@ -404,6 +497,7 @@ class _Engine:
     # --- top-level dispatch ----------------------------------------------------------
 
     async def handle(self, restaurant, customer, state, from_phone, flow_def, interaction: GenericInteraction) -> None:
+        self.flow_id = flow_def.id
         # A HUMAN_HANDOFF step (see _render_step) sets this -- while True, every
         # automated branch below is skipped entirely. The inbound Message row is already
         # written by process_inbound_message before handle() is ever called, so "log but
@@ -430,6 +524,13 @@ class _Engine:
                 await self._advance_and_render(restaurant, customer, state, from_phone, target_step, steps_by_id)
             else:
                 await self._advance_and_render(restaurant, customer, state, from_phone, current, steps_by_id)
+            return
+
+        if interaction.reply_id == JEWELLERY_LOAD_MORE_REPLY_ID and current["type"] == "jewellery_design_gallery":
+            context = state.context
+            context["jewellery_page"] = int(context.get("jewellery_page", 0)) + 1
+            state.context = context
+            await self._render_step(restaurant, customer, state, from_phone, current, steps_by_id)
             return
 
         await self._process_input(restaurant, customer, state, from_phone, current, steps_by_id, interaction)
@@ -696,7 +797,18 @@ class _Engine:
             )
 
         if step["type"] in ("message",):
-            await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.text(from_phone, prompt))
+            # A pure "message" step (welcome text, a standalone gallery step, etc.) has no
+            # options to burst/gallery through _send_options -- so curated per-step images
+            # (see _step_gallery) are sent here directly. All dispatched CONCURRENTLY via
+            # send_generic_messages_batch (image(s) listed first, text last) rather than
+            # awaited one-by-one -- same reasoning as _send_options: each is a real network
+            # round-trip to Meta, so sequential awaiting visibly stacks up.
+            messages = []
+            if step.get("show_image", True):
+                for img in await self._step_gallery(restaurant, step):
+                    messages.append(OutboundMessage.image(from_phone, img.url, (img.caption or prompt)[:1024]))
+            messages.append(OutboundMessage.text(from_phone, prompt))
+            await send_generic_messages_batch(self.session, self.sender, restaurant, customer.id, from_phone, messages)
             return
 
         if step["type"] == "human_handoff":
@@ -767,6 +879,10 @@ class _Engine:
             await self._send_options(restaurant, customer, from_phone, prompt, options, show_back, step, state.context)
             return
 
+        if step["type"] == "jewellery_design_gallery":
+            await self._render_jewellery_gallery(restaurant, customer, state, from_phone, step, show_back)
+            return
+
         # menu_select / confirm_action -- both render as a selectable option set.
         options = await self._resolve_options(restaurant, state, step)
         await self._send_options(restaurant, customer, from_phone, prompt, options, show_back, step, state.context)
@@ -831,32 +947,46 @@ class _Engine:
         if show_images and is_menu_select and options and len(options) <= step.get("photo_burst_max", _PHOTO_BURST_MAX_DEFAULT):
             burst_urls = self._photo_burst_urls(restaurant, options)
 
+        # Every image for this step (one, many, or none) is collected here -- ALWAYS sent
+        # via send_generic_messages_batch with every image FIRST and the options message
+        # (built further down) always LAST, dispatched sequentially so that order is
+        # guaranteed (see send_generic_messages_batch's docstring: concurrent dispatch was
+        # tried and reverted, since Meta accepts a plain text/interactive message faster
+        # than it accepts an image -- concurrently, the options message reliably arrived
+        # BEFORE its own image).
+        image_messages: list[OutboundMessage] = []
+
         if burst_urls:
-            # Every option gets its own photo in sequence -- a real "album" browse
-            # instead of one representative image + a text list. See _photo_burst_urls
-            # for the strict gate that decides whether this path runs at all.
-            await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.text(from_phone, body))
+            # Every option gets its own photo -- a real "album" browse instead of one
+            # representative image + a text list. See _photo_burst_urls for the strict
+            # gate that decides whether this path runs at all. No separate intro text here
+            # -- the final options_message below already carries this same `body` text as
+            # its own message body, so a leading plain-text copy of it would both violate
+            # images-before-options and be a redundant repeat of the same line.
             for option, url in zip(options, burst_urls):
                 caption = option["title"] + (f" - {option['description']}" if option.get("description") else "")
-                await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.image(from_phone, url, caption[:1024]))
+                image_messages.append(OutboundMessage.image(from_phone, url, caption[:1024]))
         elif show_images and step.get("item_context_key"):
             # An "item detail" step (e.g. "Ring Details") keyed on a previously-selected
-            # item -- sends EVERY active image Super Admin has curated for that item, each
-            # as its own message with its own caption, in display_order. WhatsApp has no
-            # native multi-image carousel for a plain text/interactive message, so a
-            # sequence of individual image messages is the actual supported mechanism (see
-            # the burst path above, which does the same thing for a list of options).
+            # item -- every active image Super Admin has curated for that item, each with
+            # its own caption, in display_order. WhatsApp has no native multi-image
+            # carousel for a plain text/interactive message, so individual image messages
+            # are the actual supported mechanism (see the burst path above, same idea for
+            # a list of options).
             gallery = await self._item_gallery(restaurant, context.get(step["item_context_key"]))
             if gallery:
                 for img in gallery:
-                    await send_generic_message(
-                        self.session, self.sender, restaurant, customer.id, from_phone,
-                        OutboundMessage.image(from_phone, img.url, (img.caption or body)[:1024]),
-                    )
+                    image_messages.append(OutboundMessage.image(from_phone, img.url, (img.caption or body)[:1024]))
             else:
                 image_url = await self._image_for_step(restaurant, step, context)
                 if image_url:
-                    await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.image(from_phone, image_url, body[:1024]))
+                    image_messages.append(OutboundMessage.image(from_phone, image_url, body[:1024]))
+        elif show_images and (step_gallery := await self._step_gallery(restaurant, step)):
+            # Curated per-step images (e.g. a dedicated gallery step, or a welcome step
+            # with more than one banner) -- same mechanism as _item_gallery above, just
+            # sourced from the step itself rather than a selected catalog item.
+            for img in step_gallery:
+                image_messages.append(OutboundMessage.image(from_phone, img.url, (img.caption or body)[:1024]))
         elif show_images:
             image_url = await self._image_for_step(restaurant, step, context)
             if image_url:
@@ -869,22 +999,170 @@ class _Engine:
                         f"• {o['title']}" + (f" - {o['description']}" if o.get("description") else "")
                         for o in options[:10]
                     ]
-                await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.image(from_phone, image_url, "\n".join(caption_lines)[:1024]))
+                image_messages.append(OutboundMessage.image(from_phone, image_url, "\n".join(caption_lines)[:1024]))
 
         # Meta caps interactive-button messages at 3 total buttons; use a list (cap 10)
         # whenever that would be exceeded, so Back always has room instead of getting
         # silently dropped.
         if len(all_options) <= 3:
-            await send_generic_message(
-                self.session, self.sender, restaurant, customer.id, from_phone,
-                OutboundMessage.interactive_buttons(from_phone, body, [{"id": o["id"], "title": o["title"][:20]} for o in all_options]),
+            options_message = OutboundMessage.interactive_buttons(
+                from_phone, body, [{"id": o["id"], "title": o["title"][:20]} for o in all_options]
             )
         else:
             rows = [{"id": o["id"], "title": o["title"][:24], "description": o.get("description", "")[:72]} for o in all_options]
+            options_message = OutboundMessage.interactive_list(from_phone, body, "Select", rows, step.get("section_title", "Options"))
+
+        await send_generic_messages_batch(
+            self.session, self.sender, restaurant, customer.id, from_phone, [*image_messages, options_message]
+        )
+
+    async def _render_jewellery_gallery(self, restaurant, customer, state, from_phone, step, show_back) -> None:
+        """Layer 3 of the jewellery-only carousel: material_select (capture_key
+        "material") -> jewellery_category_select (capture_key "jewellery_category") ->
+        this step, which pages through JewelleryDesign rows for that (material, category)
+        pair. Deliberately its OWN step type and rendering path, not a menu_select variant
+        of _send_options -- design images aren't tappable catalog options (nothing in a
+        real WhatsApp chat lets a customer "select" one of several images at once), the
+        page cursor lives in state.context["jewellery_page"] (advanced only by
+        JEWELLERY_LOAD_MORE_REPLY_ID, intercepted in handle() before this is ever called
+        again for the same page), and the image count per send is bounded by page_size --
+        unlike every other gallery path in this file, which sends every active image
+        unconditionally. This isolation is intentional: nothing here touches
+        _send_options/_item_gallery/_step_gallery, so their behavior for every other niche
+        (and jewellery's own existing category_select/item_select/piece_details flow) is
+        provably unchanged.
+
+        Groundwork for the real native WhatsApp Multi-Product Message carousel: when
+        restaurant.whatsapp_catalog_id is set AND this page has at least one design
+        already synced into that catalog (see app/services/meta_catalog_sync.py), this
+        delegates to _render_jewellery_gallery_native instead. Every restaurant today has
+        whatsapp_catalog_id NULL (no Meta Commerce Catalog connected yet), so this branch
+        is currently unreachable in practice and every line below is exercised exactly as
+        before.
+        """
+        if restaurant.whatsapp_catalog_id:
+            if await self._render_jewellery_gallery_native(restaurant, customer, state, from_phone, step, show_back):
+                return
+            # Catalog is configured but nothing on this page has a meta_retailer_id yet
+            # (sync hasn't run) -- fall through to the exact same sequential-image path
+            # used when no catalog is configured at all, rather than sending nothing.
+
+        context = state.context
+        material = context.get("material")
+        category = context.get("jewellery_category")
+        page = int(context.get("jewellery_page", 0) or 0)
+        page_size = int(step.get("page_size", 10))
+
+        back_button = {"id": BACK_REPLY_ID, "title": "⬅ Back"}
+
+        if not material or not category:
+            # Shouldn't normally happen (this step is only reachable after both prior
+            # selections capture into context) -- graceful fallback rather than a crash.
+            buttons = [back_button] if show_back else []
             await send_generic_message(
                 self.session, self.sender, restaurant, customer.id, from_phone,
-                OutboundMessage.interactive_list(from_phone, body, "Select", rows, step.get("section_title", "Options")),
+                OutboundMessage.interactive_buttons(from_phone, "Please pick a material and category first.", buttons)
+                if buttons else OutboundMessage.text(from_phone, "Please pick a material and category first."),
             )
+            return
+
+        repo = JewelleryDesignRepository(self.session)
+        total = await repo.count_designs(restaurant.id, material, category)
+        designs = await repo.list_designs(restaurant.id, material, category, offset=page * page_size, limit=page_size)
+
+        material_label = material.replace("_", " ").title()
+        category_label = category.replace("_", " ").title()
+
+        if not designs:
+            # Empty-state per spec: a clean message, not a broken/empty carousel, then
+            # Back is still available so the customer can pick a different category.
+            body = (
+                step.get("empty_message")
+                or f"No designs available in {material_label} {category_label} yet.\nPlease explore another jewellery type."
+            )
+            buttons = [back_button] if show_back else []
+            if buttons:
+                await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.interactive_buttons(from_phone, body, buttons))
+            else:
+                await send_generic_message(self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.text(from_phone, body))
+            return
+
+        messages: list[OutboundMessage] = []
+        for design in designs:
+            caption = f"{design.name}\n{material_label} • {category_label}"
+            messages.append(OutboundMessage.image(from_phone, f"{settings.PUBLIC_MEDIA_BASE_URL}/{design.image_key}", caption[:1024]))
+
+        shown_so_far = page * page_size + len(designs)
+        has_more = shown_so_far < total
+        body = f"{material_label} {category_label} -- showing {shown_so_far} of {total} designs"
+
+        buttons = []
+        if has_more:
+            buttons.append({"id": JEWELLERY_LOAD_MORE_REPLY_ID, "title": "Load More"})
+        if show_back:
+            buttons.append(back_button)
+        messages.append(OutboundMessage.interactive_buttons(from_phone, body, buttons))
+
+        await send_generic_messages_batch(self.session, self.sender, restaurant, customer.id, from_phone, messages)
+
+    async def _render_jewellery_gallery_native(self, restaurant, customer, state, from_phone, step, show_back) -> bool:
+        """Native "Multi-Product Message" branch of _render_jewellery_gallery -- a real
+        swipeable WhatsApp product carousel pulled from restaurant.whatsapp_catalog_id,
+        built from ONLY the current page's designs that already have a
+        JewelleryDesign.meta_retailer_id (i.e. have actually been synced into Meta's
+        Commerce Catalog by app/services/meta_catalog_sync.py::sync_designs_to_catalog).
+        Designs on the page without one yet are quietly excluded from the section's
+        product_items -- never a crash, never a partially-broken carousel.
+
+        Returns False (send nothing, caller falls back to the sequential-image path)
+        when there are zero eligible designs on this page, e.g. the catalog is
+        configured but this page hasn't been synced yet -- so a restaurant mid-migration
+        to the native carousel never sends a guaranteed-to-fail empty product_list
+        instead of just showing the images it already has.
+        """
+        context = state.context
+        material = context.get("material")
+        category = context.get("jewellery_category")
+        page = int(context.get("jewellery_page", 0) or 0)
+        page_size = int(step.get("page_size", 10))
+
+        if not material or not category:
+            return False
+
+        repo = JewelleryDesignRepository(self.session)
+        total = await repo.count_designs(restaurant.id, material, category)
+        designs = await repo.list_designs(restaurant.id, material, category, offset=page * page_size, limit=page_size)
+        eligible = [d for d in designs if d.meta_retailer_id]
+        if not eligible:
+            return False
+
+        material_label = material.replace("_", " ").title()
+        category_label = category.replace("_", " ").title()
+        shown_so_far = page * page_size + len(designs)
+        has_more = shown_so_far < total
+        body = f"{material_label} {category_label} -- showing {shown_so_far} of {total} designs"
+
+        product_message = OutboundMessage.product_list(
+            from_phone,
+            catalog_id=restaurant.whatsapp_catalog_id,
+            header=f"{material_label} {category_label}",
+            body=body,
+            retailer_ids=[d.meta_retailer_id for d in eligible],
+        )
+
+        back_button = {"id": BACK_REPLY_ID, "title": "⬅ Back"}
+        buttons = []
+        if has_more:
+            buttons.append({"id": JEWELLERY_LOAD_MORE_REPLY_ID, "title": "Load More"})
+        if show_back:
+            buttons.append(back_button)
+
+        messages: list[OutboundMessage] = [product_message]
+        if buttons:
+            messages.append(OutboundMessage.interactive_buttons(from_phone, body, buttons))
+
+        await send_generic_messages_batch(self.session, self.sender, restaurant, customer.id, from_phone, messages)
+        return True
 
     async def _item_gallery(self, restaurant: Restaurant, item_id: str | None):
         """Every active image curated for one specific item (see
@@ -898,13 +1176,27 @@ class _Engine:
             return []
         return await resolve_item_images(self.session, item, restaurant.id)
 
+    async def _step_gallery(self, restaurant: Restaurant, step: dict):
+        """Every active image curated directly on this flow step (see
+        app/services/image_presenter.py::resolve_step_images) -- distinct from an item's
+        or category's own images, which a step only shows indirectly via `buttons_from`/
+        `item_context_key`. Empty list (not an error) when self.flow_id is unset (should
+        never happen once handle()/preview_jump_to_step have run) or nothing's curated."""
+        if self.flow_id is None:
+            return []
+        step_id = step.get("step_id")
+        if not step_id:
+            return []
+        return await resolve_step_images(self.session, self.flow_id, step_id, restaurant.id)
+
     async def _image_for_step(self, restaurant: Restaurant, step: dict, context: dict) -> str | None:
         source = step.get("buttons_from")
         if source == "categories":
             categories = await self.category_repo.list_visible(restaurant.id)
             for c in categories:
-                if c.image_url:
-                    return c.image_url
+                images = await resolve_category_images(self.session, c, restaurant.id)
+                if images:
+                    return images[0].url
         elif source == "items":
             category_id = context.get(step.get("category_context_key", "category_id"))
             if category_id:
@@ -923,7 +1215,7 @@ class _Engine:
             # falls through to the restaurant-level fallback below in that case, rather
             # than silently sending nothing.
             pass
-        if step.get("id") == "welcome" or source == "welcome":
+        if step.get("step_id") == "welcome" or source == "welcome":
             return restaurant.cover_image_url or restaurant.logo_url
         return restaurant.cover_image_url or _PLACEHOLDER_IMAGE.format(label=restaurant.name.replace(" ", "+"))
 
@@ -946,10 +1238,21 @@ class _Engine:
 
         if source == "categories":
             categories = await self.category_repo.list_visible(restaurant.id)
-            # image_url carried per-option so _send_options can decide whether every
-            # option has its own distinct photo (photo-burst gating) -- free here, the
-            # column is already on the fetched row, no extra query.
-            return [{"id": f"category:{c.id}", "title": c.name, "image_url": c.image_url} for c in categories]
+            # Batched (one query for every category) rather than resolve_category_images
+            # per category -- same reasoning as the "items" branch below; every option
+            # needs its own image up front for photo-burst gating, not just the first hit
+            # _image_for_step used to stop at. Falls back to the legacy image_url string
+            # column inside resolve_category_images_bulk itself when a category has no
+            # curated Image rows yet.
+            images_by_category = await resolve_category_images_bulk(self.session, categories, restaurant.id)
+            return [
+                {
+                    "id": f"category:{c.id}",
+                    "title": c.name,
+                    "image_url": next((img.url for img in images_by_category.get(c.id, [])), None),
+                }
+                for c in categories
+            ]
 
         if source == "items":
             category_id = context.get(step.get("category_context_key", "category_id"))
@@ -991,6 +1294,29 @@ class _Engine:
 
         if source == "time_slots":
             return await self._time_slot_options(restaurant, context)
+
+        if source == "jewellery_materials":
+            # Layer 1 of the jewellery-only carousel (see module docstring addendum below
+            # _render_jewellery_gallery) -- distinct materials actually present in this
+            # tenant's JewelleryDesign rows, not a hardcoded list, so a new material shows
+            # up automatically the next time the downloader script runs for it.
+            repo = JewelleryDesignRepository(self.session)
+            materials = await repo.list_materials(restaurant.id)
+            return [{"id": f"material:{m}", "title": m.replace("_", " ").title()} for m in materials]
+
+        if source == "jewellery_categories":
+            # Layer 2 -- categories available for the material captured by the preceding
+            # material_select step (capture_key "material", see jewellers.py's
+            # material_select step). Empty list (no options) if a customer somehow lands
+            # here without a material in context -- same "nothing to show" shape every
+            # other source returns for an unmet precondition (e.g. "items" above with no
+            # category_id yet).
+            material = context.get("material")
+            if not material:
+                return []
+            repo = JewelleryDesignRepository(self.session)
+            categories = await repo.list_categories(restaurant.id, material)
+            return [{"id": f"jewellery_category:{c}", "title": c.replace("_", " ").title()} for c in categories]
 
         return []
 

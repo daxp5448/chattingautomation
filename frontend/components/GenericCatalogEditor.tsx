@@ -2,18 +2,18 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
-import { ImageUploadWidget } from "@/components/ImageUploadWidget";
-import { TemplateImageUpload } from "@/components/TemplateImageUpload";
+import { ImageManager, ownerQueryString } from "@/components/ImageManager";
 import type { CatalogCategoryRow, CatalogItemRow, ImageRecord } from "@/lib/types";
+import { IconFolder, IconPackage } from "@/components/icons";
 
 // The generic-engine counterpart of MenuForRestaurant (legacy Category/Product) in
 // page.tsx -- talks to /restaurants/{id}/catalog-categories|catalog-items instead
-// (backend/app/api/v1/routers/catalog.py). Item photos go through the real Universal
-// Image Processing Pipeline (ImageUploadWidget -- crop/replace/variants), the same
-// pipeline generic_flow_engine.py's resolve_item_images already prefers when rendering
-// the live bot. Category icons are a plain string field (CatalogCategory.image_url, no
-// CatalogItem row to hang a pipeline Image off of), so they use the simpler permanent-URL
-// uploader instead -- see catalog.py's upload-image endpoint for why.
+// (backend/app/api/v1/routers/catalog.py). Both item and category photos go through the
+// real Universal Image Processing Pipeline (ImageManager -- crop/replace/variants/reuse-
+// from-library), the same pipeline generic_flow_engine.py's resolve_item_images/
+// resolve_category_images already prefer when rendering the live bot -- a category with
+// no curated Image rows yet still falls back to its legacy image_url string column
+// (see image_presenter.py::resolve_category_images), so nothing already set is lost.
 export function GenericCatalogEditor({ restaurantId }: { restaurantId: string }) {
   const [categories, setCategories] = useState<CatalogCategoryRow[]>([]);
   const [items, setItems] = useState<CatalogItemRow[]>([]);
@@ -30,6 +30,9 @@ export function GenericCatalogEditor({ restaurantId }: { restaurantId: string })
 
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [itemImages, setItemImages] = useState<Record<string, ImageRecord[]>>({});
+
+  const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
+  const [categoryImages, setCategoryImages] = useState<Record<string, ImageRecord[]>>({});
 
   async function load() {
     setLoading(true);
@@ -136,10 +139,26 @@ export function GenericCatalogEditor({ restaurantId }: { restaurantId: string })
     setExpandedItemId(item.id);
     if (!itemImages[item.id]) {
       try {
-        const images = await apiFetch<ImageRecord[]>(`/restaurants/${restaurantId}/images?catalog_item_id=${item.id}`);
+        const images = await apiFetch<ImageRecord[]>(`/restaurants/${restaurantId}/images?${ownerQueryString({ catalogItemId: item.id })}`);
         setItemImages((prev) => ({ ...prev, [item.id]: images }));
       } catch {
         setItemImages((prev) => ({ ...prev, [item.id]: [] })); // non-fatal -- widget just starts empty
+      }
+    }
+  }
+
+  async function toggleExpandCategory(category: CatalogCategoryRow) {
+    if (expandedCategoryId === category.id) {
+      setExpandedCategoryId(null);
+      return;
+    }
+    setExpandedCategoryId(category.id);
+    if (!categoryImages[category.id]) {
+      try {
+        const images = await apiFetch<ImageRecord[]>(`/restaurants/${restaurantId}/images?${ownerQueryString({ catalogCategoryId: category.id })}`);
+        setCategoryImages((prev) => ({ ...prev, [category.id]: images }));
+      } catch {
+        setCategoryImages((prev) => ({ ...prev, [category.id]: [] })); // non-fatal -- manager just starts empty
       }
     }
   }
@@ -156,50 +175,66 @@ export function GenericCatalogEditor({ restaurantId }: { restaurantId: string })
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Menu</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Menu</h1>
         <p className="text-sm text-slate-500">Categories and items your customers see when they order on WhatsApp -- including photos.</p>
       </div>
-      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {error && <p className="rounded-lg border border-red-100 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">{error}</p>}
 
       <section className="space-y-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-          <span>📂</span> Categories
+          <IconFolder size={15} /> Categories
         </h2>
-        <form onSubmit={handleCreateCategory} className="flex items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <form onSubmit={handleCreateCategory} className="flex items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
           <div>
             <label className="block text-xs font-medium text-slate-500">Name</label>
-            <input required value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="e.g. Gold Jewellery" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
+            <input required value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="e.g. Gold Jewellery" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
           </div>
-          <button type="submit" disabled={creatingCategory} className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-white shadow-sm disabled:opacity-60">
+          <button type="submit" disabled={creatingCategory} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white shadow-soft transition-colors hover:bg-primary-dark disabled:opacity-60">
             {creatingCategory ? "Adding..." : "+ Add category"}
           </button>
         </form>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {categories.map((c) => (
-            <div key={c.id} className="space-y-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div key={c.id} className="space-y-2 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-card transition-shadow hover:shadow-panel">
               <div className="flex items-center justify-between gap-2">
                 <input
                   value={c.name}
                   onChange={(e) => setCategories((prev) => prev.map((x) => (x.id === c.id ? { ...x, name: e.target.value } : x)))}
                   onBlur={(e) => updateCategory(c.id, { name: e.target.value })}
-                  className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm font-medium"
+                  className="flex-1 rounded-md border border-transparent px-2 py-1 text-sm font-medium transition-colors hover:border-slate-200 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
-                <button onClick={() => deleteCategory(c)} className="shrink-0 text-xs font-medium text-red-600 hover:underline">
+                <button onClick={() => deleteCategory(c)} className="shrink-0 rounded-md px-1.5 py-0.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50">
                   Delete
                 </button>
               </div>
-              <TemplateImageUpload
-                label="Category icon"
-                value={c.image_url || ""}
-                onChange={(url) => updateCategory(c.id, { image_url: url || null })}
-                endpoint={`/restaurants/${restaurantId}/catalog-categories/upload-image`}
-              />
-              <button
-                onClick={() => updateCategory(c.id, { visible: !c.visible })}
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${c.visible ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}
-              >
-                {c.visible ? "Visible -- click to hide" : "Hidden -- click to show"}
-              </button>
+              {(() => {
+                const ready = categoryImages[c.id]?.find((img) => img.status === "ready");
+                const thumb = ready ? ready.urls.thumbnail || ready.urls.website : c.image_url;
+                return thumb ? <img src={thumb} alt="" className="h-16 w-full rounded-lg object-cover" /> : null;
+              })()}
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  onClick={() => updateCategory(c.id, { visible: !c.visible })}
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium transition-colors ${c.visible ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}
+                >
+                  {c.visible ? "Visible -- click to hide" : "Hidden -- click to show"}
+                </button>
+                <button onClick={() => toggleExpandCategory(c)} className="rounded-md px-1.5 py-0.5 text-xs font-medium text-slate-500 transition-colors hover:bg-primary/10 hover:text-primary-dark">
+                  {expandedCategoryId === c.id ? "Close photos" : "Photos"}
+                </button>
+              </div>
+              {expandedCategoryId === c.id && (
+                <ImageManager
+                  restaurantId={restaurantId}
+                  imageType="category"
+                  owner={{ catalogCategoryId: c.id }}
+                  images={categoryImages[c.id] || []}
+                  onChange={(images) => {
+                    setCategoryImages((prev) => ({ ...prev, [c.id]: images }));
+                    load(); // category thumbnail above prefers these over the legacy image_url
+                  }}
+                />
+              )}
             </div>
           ))}
           {categories.length === 0 && <p className="text-sm text-slate-400">No categories yet.</p>}
@@ -208,26 +243,26 @@ export function GenericCatalogEditor({ restaurantId }: { restaurantId: string })
 
       <section className="space-y-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-          <span>🍽️</span> Items
+          <IconPackage size={15} /> Items
         </h2>
-        <form onSubmit={handleCreateItem} className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <form onSubmit={handleCreateItem} className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
           <div>
             <label className="block text-xs font-medium text-slate-500">Name</label>
-            <input required value={itemName} onChange={(e) => setItemName(e.target.value)} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
+            <input required value={itemName} onChange={(e) => setItemName(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500">Price</label>
-            <input type="number" step="0.01" value={itemPrice} onChange={(e) => setItemPrice(e.target.value)} className="w-28 rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
+            <input type="number" step="0.01" value={itemPrice} onChange={(e) => setItemPrice(e.target.value)} className="w-28 rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500">Category</label>
-            <select value={itemCategoryId} onChange={(e) => setItemCategoryId(e.target.value)} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">
+            <select value={itemCategoryId} onChange={(e) => setItemCategoryId(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
           </div>
-          <button type="submit" disabled={creatingItem || categories.length === 0} className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-white shadow-sm disabled:opacity-60">
+          <button type="submit" disabled={creatingItem || categories.length === 0} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white shadow-soft transition-colors hover:bg-primary-dark disabled:opacity-60">
             {creatingItem ? "Adding..." : "+ Add item"}
           </button>
         </form>
@@ -235,7 +270,7 @@ export function GenericCatalogEditor({ restaurantId }: { restaurantId: string })
 
         <div className="space-y-2">
           {items.map((item) => (
-            <div key={item.id} className="rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card transition-shadow hover:shadow-panel">
               <div className="flex items-center justify-between gap-3 px-4 py-3">
                 <button type="button" onClick={() => toggleExpandItem(item)} className="flex flex-1 items-center gap-3 text-left">
                   {(() => {
@@ -246,7 +281,7 @@ export function GenericCatalogEditor({ restaurantId }: { restaurantId: string })
                     // ever been expanded in this session.
                     const ready = itemImages[item.id]?.find((img) => img.status === "ready");
                     const thumb = ready ? ready.urls.thumbnail || ready.urls.website : item.images[0];
-                    return thumb ? <img src={thumb} alt="" className="h-10 w-10 rounded-md object-cover" /> : null;
+                    return thumb ? <img src={thumb} alt="" className="h-10 w-10 rounded-lg object-cover" /> : null;
                   })()}
                   <div>
                     <span className="font-medium text-slate-800">{item.name}</span>
@@ -254,13 +289,13 @@ export function GenericCatalogEditor({ restaurantId }: { restaurantId: string })
                     <span className="ml-2 text-sm text-slate-600">{item.price ?? "-"}</span>
                   </div>
                 </button>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${item.available ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${item.available ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
                   {item.available ? "Available" : "Unavailable"}
                 </span>
-                <button onClick={() => toggleExpandItem(item)} className="text-xs font-medium text-slate-500 hover:text-primary">
+                <button onClick={() => toggleExpandItem(item)} className="rounded-md px-2 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-primary/10 hover:text-primary-dark">
                   {expandedItemId === item.id ? "Close" : "Edit"}
                 </button>
-                <button onClick={() => deleteItem(item)} className="text-xs font-medium text-red-600 hover:underline">
+                <button onClick={() => deleteItem(item)} className="rounded-md px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50">
                   Delete
                 </button>
               </div>
@@ -290,10 +325,10 @@ export function GenericCatalogEditor({ restaurantId }: { restaurantId: string })
                   </div>
                   <div>
                     <p className="mb-1 text-xs font-medium text-slate-500">Photos</p>
-                    <ImageUploadWidget
+                    <ImageManager
                       restaurantId={restaurantId}
                       imageType="product"
-                      catalogItemId={item.id}
+                      owner={{ catalogItemId: item.id }}
                       images={itemImages[item.id] || []}
                       onChange={(images) => {
                         setItemImages((prev) => ({ ...prev, [item.id]: images }));

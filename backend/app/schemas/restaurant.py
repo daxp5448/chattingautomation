@@ -35,6 +35,11 @@ class RestaurantCreate(RestaurantBase):
     slug: str
     whatsapp_phone_number_id: str | None = None
     whatsapp_business_account_id: str | None = None
+    # Meta/Facebook Commerce Catalog id connected to this business's WABA -- see
+    # app/models/restaurant.py::whatsapp_catalog_id. Optional; unset means the jewellery
+    # design carousel (and any future catalog-message feature) falls back to its plain
+    # sequential-image behavior instead of a native product_list message.
+    whatsapp_catalog_id: str | None = None
     whatsapp_access_token: str | None = None
     whatsapp_verify_token: str | None = None
     razorpay_key_id: str | None = None
@@ -82,6 +87,7 @@ class RestaurantUpdate(BaseModel):
     loyalty_settings: dict[str, Any] | None = None
     whatsapp_phone_number_id: str | None = None
     whatsapp_business_account_id: str | None = None
+    whatsapp_catalog_id: str | None = None
     whatsapp_access_token: str | None = None
     whatsapp_verify_token: str | None = None
     razorpay_key_id: str | None = None
@@ -105,6 +111,7 @@ class RestaurantRead(RestaurantBase):
     slug: str
     whatsapp_phone_number_id: str | None
     whatsapp_business_account_id: str | None
+    whatsapp_catalog_id: str | None = None
     # Presence (not the id's value itself) is what the frontend needs -- whether native
     # WhatsApp Flow ordering is enabled. The private key is never exposed here or anywhere
     # else via the API; only POST .../whatsapp-flow/enable|disable ever touches it.
@@ -121,6 +128,11 @@ class RestaurantRead(RestaurantBase):
     # and every per-niche demo restaurant it fans out to. The frontend uses this to
     # exclude demo restaurants from normal business lists/counts.
     is_demo: bool
+    # See app/models/restaurant.py::demo_sends_via_restaurant_id -- set on a per-niche demo
+    # showcase restaurant that has no WhatsApp credentials of its own and sends through the
+    # sentinel Flagship restaurant instead. The frontend uses this to show "Connected (via
+    # Flagship)" rather than a misleading "Not configured" for these businesses.
+    demo_sends_via_restaurant_id: uuid.UUID | None = None
     # See app/models/restaurant.py::demo_mode_enabled -- true while this business's own
     # WhatsApp number is temporarily repointed at the Demo Bot's industry picker instead
     # of its normal order flow. Distinct from is_demo (which marks a restaurant as never

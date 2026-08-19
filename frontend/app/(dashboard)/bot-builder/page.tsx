@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type ComponentType, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import { useCurrentRestaurant } from "@/lib/restaurant";
 import type { BotMessage, FaqEntry } from "@/lib/types";
+import { type IconProps, IconWave, IconCart, IconAlertTriangle, IconCheck } from "@/components/icons";
 
 // Mirrors app/services/flow_engine.py::DEFAULT_MESSAGES -- shown as a starting point so
 // an admin can see (and tweak) exactly what the bot already says, instead of staring at
@@ -25,17 +26,17 @@ const DEFAULT_MESSAGE_TEXT: Record<string, string> = {
 
 const MESSAGE_GROUPS: {
   title: string;
-  icon: string;
+  icon: ComponentType<IconProps>;
   items: { key: string; label: string; hint?: string }[];
 }[] = [
   {
     title: "Greeting",
-    icon: "👋",
+    icon: IconWave,
     items: [{ key: "welcome", label: "First reply when a customer says \"hi\"", hint: "{{restaurant_name}}" }],
   },
   {
     title: "While ordering",
-    icon: "🛒",
+    icon: IconCart,
     items: [
       { key: "ask_quantity", label: "After picking an item, asking how many", hint: "{{product_name}}" },
       { key: "ask_coupon", label: "At checkout, asking for a coupon code" },
@@ -50,7 +51,7 @@ const MESSAGE_GROUPS: {
   },
   {
     title: "Special situations",
-    icon: "⚠️",
+    icon: IconAlertTriangle,
     items: [
       { key: "restaurant_closed", label: "Sent if no branch is currently open" },
       { key: "today_special_empty", label: "Sent when \"Today's Special\" has nothing marked yet" },
@@ -169,7 +170,9 @@ function BotBuilderForRestaurant({ restaurantId }: { restaurantId: string }) {
         {MESSAGE_GROUPS.map((group) => (
           <div key={group.title} className="rounded-xl border border-slate-200 bg-white shadow-sm">
             <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3">
-              <span className="text-lg">{group.icon}</span>
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/10 text-primary-dark">
+                <group.icon size={14} strokeWidth={1.8} />
+              </span>
               <h2 className="text-sm font-semibold text-slate-800">{group.title}</h2>
             </div>
             <div className="divide-y divide-slate-100">
@@ -199,7 +202,11 @@ function BotBuilderForRestaurant({ restaurantId }: { restaurantId: string }) {
                     >
                       {saving === key ? "Saving..." : "Save"}
                     </button>
-                    {justSaved === key && <span className="text-xs font-medium text-emerald-600">Saved ✓</span>}
+                    {justSaved === key && (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+                        <IconCheck size={11} strokeWidth={2.2} /> Saved
+                      </span>
+                    )}
                     {hint && <span className="text-[11px] text-slate-400">Variables: {hint}</span>}
                   </div>
                 </div>

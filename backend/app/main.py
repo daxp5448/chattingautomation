@@ -122,7 +122,7 @@ _PRIVACY_POLICY_HTML = """
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Privacy Policy — KelvionTech WhatsApp Restaurant Platform</title>
+  <title>Privacy Policy — KelvionTech WhatsApp Business Platform</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; color: #1f2937; line-height: 1.6; }
@@ -131,26 +131,27 @@ _PRIVACY_POLICY_HTML = """
 </head>
 <body>
   <h1>Privacy Policy</h1>
-  <p>This policy covers the KelvionTech WhatsApp ordering platform and any restaurant using it to
-  take orders over WhatsApp.</p>
+  <p>This policy covers the KelvionTech WhatsApp Business OS platform and any business using it to
+  take orders, bookings, appointments, or enquiries over WhatsApp.</p>
 
   <h2>What we collect</h2>
-  <p>When you message a restaurant on WhatsApp through this platform, we store your WhatsApp phone
-  number, name (if provided), messages exchanged with the bot, and order history (items, delivery
-  address, payment status) so the restaurant can fulfill your order and provide support.</p>
+  <p>When you message a business on WhatsApp through this platform, we store your WhatsApp phone
+  number, name (if provided), messages exchanged with the bot, and your engagement history (items,
+  bookings, appointments, delivery/service details, payment status) so the business can fulfill
+  your request and provide support.</p>
 
   <h2>How we use it</h2>
-  <p>Data is used only to process orders, respond to your messages, and operate loyalty/coupon
-  features for the specific restaurant you're messaging. We do not sell or share your data with
-  third parties, except payment processors (e.g. Razorpay) strictly to complete a transaction you
-  initiated.</p>
+  <p>Data is used only to process your order/booking/appointment/enquiry, respond to your messages,
+  and operate loyalty/coupon features for the specific business you're messaging. We do not sell or
+  share your data with third parties, except payment processors (e.g. Razorpay) strictly to complete
+  a transaction you initiated.</p>
 
   <h2>Data retention</h2>
-  <p>Order and conversation history is retained for as long as your account with the restaurant is
-  active, so order history and loyalty points remain accurate.</p>
+  <p>Engagement and conversation history is retained for as long as your account with the business is
+  active, so order/booking history and loyalty points remain accurate.</p>
 
   <h2>Contact</h2>
-  <p>To request access to or deletion of your data, contact the restaurant you ordered from directly
+  <p>To request access to or deletion of your data, contact the business you engaged with directly
   via the support number in their WhatsApp bot.</p>
 </body>
 </html>

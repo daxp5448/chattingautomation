@@ -54,7 +54,7 @@ class RazorpayGateway(PaymentGateway):
         one by the caller.
         """
         if not self.key_id or not self.key_secret:
-            raise ValueError("Razorpay is not configured for this restaurant")
+            raise ValueError("Razorpay is not configured for this business")
         if not payment_id:
             raise ValueError("Cannot refund: no Razorpay payment_id on this order")
 

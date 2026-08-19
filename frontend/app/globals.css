@@ -3,10 +3,51 @@
 @tailwind utilities;
 
 :root {
-  --color-primary: #16a34a;
+  /* Brand teal, sampled from the KelvionTech ribbon mark -- the single accent color
+     used across buttons, links, active nav states, and focus rings. */
+  --color-primary: #0d9488;
+  --color-primary-dark: #115e59;
+  --color-primary-light: #5eead4;
+  /* Deep graphite/navy -- the dark surface for brand panels (Login) and high-contrast
+     chrome, distinct from the teal accent so a saturated color never has to carry an
+     entire background on its own. */
   --color-secondary: #0f172a;
 }
 
+* {
+  border-color: theme("colors.slate.200");
+}
+
 body {
-  @apply bg-slate-50 text-slate-900;
+  @apply bg-white text-slate-900 antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+/* A single, consistent focus ring across every input/button in the app, instead of each
+   component hand-rolling its own focus:ring-* utility combination. */
+:is(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Thin, unobtrusive scrollbars -- the sidebar and long tables feel considerably less
+   "default browser chrome" with these. Cosmetic only, no layout/behavior impact. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: theme("colors.slate.300");
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: theme("colors.slate.400");
 }

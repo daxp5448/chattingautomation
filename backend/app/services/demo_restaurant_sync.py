@@ -27,9 +27,33 @@ from app.services.niche_provisioning import provision_from_template
 logger = logging.getLogger(__name__)
 
 
+async def _unique_demo_slug(session, code: str) -> str:
+    """`demo-{code}` is unique against every OTHER demo restaurant (is_demo rows only
+    ever come from this function), but not necessarily against an unrelated pre-existing
+    business that happens to already own that exact slug (found live: a stray, non-demo
+    "Demo Restaurant" / slug="demo-restaurant" business blocked provisioning the entire
+    "restaurant" niche, and -- before this fix -- took the other 11 niches down with it
+    in the same all-or-nothing transaction). Falls back to a numeric suffix, same
+    resolution a human would reach for if the plain slug were taken when creating a
+    business by hand.
+    """
+    base = f"demo-{code}"
+    candidate = base
+    suffix = 2
+    while (await session.execute(select(Restaurant.id).where(Restaurant.slug == candidate))).scalar_one_or_none() is not None:
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
 async def sync_demo_restaurants(session, sentinel_restaurant_id) -> list[str]:
     """Returns the list of niche codes a demo restaurant was newly created for. A niche
-    that already has one is left completely untouched."""
+    that already has one is left completely untouched.
+
+    Each niche commits independently (a savepoint per niche, rolled back on that niche's
+    own failure only) -- one niche hitting an unexpected error must never take the other
+    11, already successfully provisioned in this same call, down with it.
+    """
     created = []
     templates = await NicheTemplateRepository(session).list_all()
     for template in templates:
@@ -39,21 +63,27 @@ async def sync_demo_restaurants(session, sentinel_restaurant_id) -> list[str]:
         if existing.scalar_one_or_none() is not None:
             continue
 
-        restaurant = Restaurant(
-            name=f"Demo — {template.name}",
-            slug=f"demo-{template.code}",
-            is_demo=True,
-            demo_sends_via_restaurant_id=sentinel_restaurant_id,
-            # No whatsapp_phone_number_id of its own -- never looked up directly by the
-            # webhook (app/api/v1/routers/webhook.py); the sentinel owns the only real
-            # demo number, and send_generic_message routes through it (see
-            # app/services/generic_flow_engine.py) via demo_sends_via_restaurant_id above.
-        )
-        session.add(restaurant)
-        await session.flush()
+        try:
+            async with session.begin_nested():
+                restaurant = Restaurant(
+                    name=f"Demo — {template.name}",
+                    slug=await _unique_demo_slug(session, template.code),
+                    is_demo=True,
+                    demo_sends_via_restaurant_id=sentinel_restaurant_id,
+                    # No whatsapp_phone_number_id of its own -- never looked up directly
+                    # by the webhook (app/api/v1/routers/webhook.py); the sentinel owns
+                    # the only real demo number, and send_generic_message routes through
+                    # it (see app/services/generic_flow_engine.py) via
+                    # demo_sends_via_restaurant_id above.
+                )
+                session.add(restaurant)
+                await session.flush()
+                await provision_from_template(session, restaurant, template)
+        except Exception:
+            logger.exception("Demo restaurant provisioning failed for niche '%s' -- other niches unaffected", template.code)
+            continue
 
-        await provision_from_template(session, restaurant, template)
+        await session.commit()
         created.append(template.code)
 
-    await session.commit()
     return created

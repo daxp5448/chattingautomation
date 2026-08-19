@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import type { BotButton, FlowDefinitionSummary, HomeButton, Restaurant } from "@/lib/types";
+import { IconCheck } from "@/components/icons";
 
 // --- Legacy engine: BotButton CRUD (already existed server-side; this page is what
 // finally uses its PATCH endpoint + adds reorder/visibility, which bot-builder's own
@@ -114,7 +115,7 @@ function LegacyHomeBuilder({ restaurantId }: { restaurantId: string }) {
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500">Action</label>
-          <input required value={action} onChange={(e) => setAction(e.target.value)} placeholder="order_food" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
+          <input required value={action} onChange={(e) => setAction(e.target.value)} placeholder="view_catalog" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
         </div>
         <button type="submit" disabled={creating} className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-white disabled:opacity-60">
           {creating ? "Adding..." : "Add button"}
@@ -271,7 +272,11 @@ function GenericHomeBuilder({ restaurantId }: { restaurantId: string }) {
         <button onClick={save} disabled={saving || buttons.length === 0} className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-white disabled:opacity-60">
           {saving ? "Saving..." : "Save home screen"}
         </button>
-        {savedTick && <span className="text-xs font-medium text-emerald-600">Saved ✓</span>}
+        {savedTick && (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+            <IconCheck size={12} strokeWidth={2.2} /> Saved
+          </span>
+        )}
         <span className="text-xs text-slate-400">Titles must be 20 characters or fewer (WhatsApp button limit).</span>
       </div>
     </div>

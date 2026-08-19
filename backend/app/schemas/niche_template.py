@@ -15,6 +15,12 @@ class NicheTemplateSummary(BaseModel):
     name: str
     action_type: EngagementType
     icon: str | None
+    # Included directly on the summary (not just NicheTemplateFullRead) so the Super
+    # Admin sidebar can resolve a business's terminology/module gating off the one
+    # GET /niche-templates list call it already makes, without a second round trip per
+    # page load just to read two small JSON fields -- see frontend/lib/restaurant.tsx.
+    terminology: dict[str, Any]
+    default_modules: dict[str, Any]
 
 
 class NicheCatalogItem(BaseModel):

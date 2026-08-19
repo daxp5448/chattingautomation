@@ -19,6 +19,10 @@ export interface Restaurant {
   // True for the sentinel Demo Bot restaurant and every per-niche demo restaurant it
   // fans out to (see backend app/services/demo_bot_service.py) -- not a real business.
   is_demo: boolean;
+  // Set on a per-niche demo showcase restaurant with no WhatsApp credentials of its own --
+  // it sends through this other restaurant (the sentinel Flagship) instead. null for the
+  // Flagship itself and every real (non-demo) restaurant.
+  demo_sends_via_restaurant_id: string | null;
   // True while THIS business's own WhatsApp number is temporarily repointed at the Demo
   // Bot's industry picker instead of its normal order flow -- distinct from is_demo,
   // which marks a restaurant as never having real customers at all. See
@@ -38,6 +42,7 @@ export interface Restaurant {
   enabled_features: string[] | null;
   whatsapp_phone_number_id: string | null;
   whatsapp_business_account_id: string | null;
+  whatsapp_catalog_id: string | null;
   // Set once native WhatsApp Flow ordering is enabled (POST .../whatsapp-flow/enable) --
   // see components/WhatsAppFlowToggle.tsx.
   whatsapp_flow_order_id: string | null;
@@ -75,6 +80,9 @@ export interface ImageRecord {
   restaurant_id: string;
   image_type: string;
   catalog_item_id: string | null;
+  catalog_category_id: string | null;
+  flow_definition_id: string | null;
+  flow_step_id: string | null;
   original_width: number;
   original_height: number;
   original_size_bytes: number;
@@ -143,6 +151,14 @@ export interface NicheTemplateSummary {
   name: string;
   action_type: "order" | "inquiry" | "appointment" | "booking";
   icon: string;
+  // {status_labels, catalog_label, category_label, item_label, staff_label} -- purely
+  // display copy, see backend/app/models/niche_template.py. Used by the Super Admin
+  // sidebar (frontend/(dashboard)/layout.tsx) to relabel nav items per business niche.
+  terminology: Record<string, unknown>;
+  // {staff_selection, deposit_payment, ...} -- module toggles copied onto a business at
+  // creation and independently editable after. Used by the sidebar to hide modules a
+  // niche/business doesn't use (e.g. Coupons for a lead-only niche).
+  default_modules: Record<string, boolean>;
 }
 
 // Mirrors backend/app/schemas/niche_template.py's NicheCatalogItem/NicheCatalogCategory --
@@ -426,6 +442,41 @@ export interface Order {
   created_at: string;
 }
 
+// GET /restaurants/{id}/engagements -- the generic-engine counterpart of Order, one
+// shape covering all 4 EngagementType values (see backend/app/models/engagement.py).
+// `items` only populated for type="order"; `details` carries the type-specific
+// structured data (staff/slot for an appointment, check_in/out for a booking, free-text
+// notes for an inquiry) since that shape varies per niche, not per type.
+export interface EngagementItem {
+  id: string;
+  catalog_item_id: string;
+  name_snapshot: string;
+  price_snapshot: number;
+  quantity: number;
+}
+
+export interface Engagement {
+  id: string;
+  restaurant_id: string;
+  branch_id: string | null;
+  reference_number: string;
+  type: "order" | "inquiry" | "appointment" | "booking";
+  status: "new" | "confirmed" | "in_progress" | "completed" | "cancelled";
+  customer_name: string | null;
+  customer_phone: string;
+  requires_payment: boolean;
+  payment_status: string;
+  payment_method: string | null;
+  subtotal: number;
+  tax: number;
+  discount: number;
+  total: number;
+  details: Record<string, unknown>;
+  items: EngagementItem[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DashboardStats {
   total_orders: number;
   revenue: number;
@@ -435,6 +486,40 @@ export interface DashboardStats {
   average_order_value: number;
   most_ordered_item: string | null;
   total_customers: number;
+}
+
+// GET /admin/dashboard/platform-stats -- the real, cross-tenant Super Admin Dashboard
+// aggregate (see backend/app/api/v1/routers/dashboard.py::get_platform_stats). Every
+// number here is a DB aggregate over every non-demo business, never a client-side reduce.
+export interface PlatformCountAndRevenue {
+  count: number;
+  revenue: number;
+}
+
+export interface PlatformActivityEntry {
+  id: string;
+  business_name: string | null;
+  type: "order" | "inquiry" | "appointment" | "booking";
+  status: string;
+  customer_name: string | null;
+  total: number;
+  created_at: string;
+}
+
+export interface PlatformStats {
+  businesses: {
+    total: number;
+    active: number;
+    connected_whatsapp: number;
+    by_niche: Record<string, number>;
+  };
+  orders_legacy: PlatformCountAndRevenue;
+  orders_generic: PlatformCountAndRevenue;
+  orders: PlatformCountAndRevenue;
+  inquiries: PlatformCountAndRevenue;
+  appointments: PlatformCountAndRevenue;
+  bookings: PlatformCountAndRevenue;
+  recent_activity: PlatformActivityEntry[];
 }
 
 export interface Coupon {

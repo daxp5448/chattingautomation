@@ -457,3 +457,37 @@ async def test_talk_to_human_hands_off_and_pauses_automation(db_session, restaur
     second_customer = await _get_customer(db_session, restaurant.id, phone=second_phone)
     second_state = await _get_state(db_session, second_customer.id)
     assert second_state.current_step == "cart_menu"
+
+
+# --- regression: typing a custom quantity number must NOT reset the conversation --------
+
+
+async def test_custom_quantity_number_does_not_reset_the_conversation(db_session, restaurant_tenant, sender):
+    """Real bug, reproducible on every niche: _looks_like_greeting stripped non-letter
+    characters before checking for emptiness, so a bare number like "5" normalized down to
+    "" and was treated as a greeting -- wiping state.context and restarting the whole
+    conversation from the entry step, right in the middle of typing a custom quantity."""
+    restaurant = restaurant_tenant
+    starters_category_id = await _get_category_id(db_session, restaurant.id, "Starters")
+    paneer_item = await _get_item(db_session, restaurant.id, "Paneer Tikka")
+    phone = "919876500096"
+
+    await _send_text(db_session, sender, restaurant, phone, "hi", profile_name="Custom Qty Tester")
+    await _tap(db_session, sender, restaurant, phone, "welcome:order")
+    await _tap(db_session, sender, restaurant, phone, f"category:{starters_category_id}")
+    await _tap(db_session, sender, restaurant, phone, f"item:{paneer_item.id}")
+    customer = await _get_customer(db_session, restaurant.id, phone=phone)
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "quantity_select"
+
+    # Tap "Custom" -> bot asks for a number, sets the awaiting-custom-qty flag.
+    await _tap(db_session, sender, restaurant, phone, "qty:custom")
+    state = await _get_state(db_session, customer.id)
+    assert state.context.get("_awaiting_custom_qty") is True
+    assert "quantity" in _body_text(_last_message_to(sender, phone)).lower()
+
+    # Typing a bare number must be captured as the quantity, NOT reset to welcome.
+    await _send_text(db_session, sender, restaurant, phone, "5")
+    state = await _get_state(db_session, customer.id)
+    assert state.current_step == "cart_menu"  # not "welcome" -- the bug sent it back here
+    assert state.context["cart"] == [{"item_id": str(paneer_item.id), "name": "Paneer Tikka", "price": 220.0, "qty": 5}]

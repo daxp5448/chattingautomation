@@ -7,10 +7,18 @@ from app.db.base import utcnow
 from app.models.enums import UserRole
 from app.models.image import Image
 from app.models.user import User
-from app.repositories.catalog_repository import CatalogItemRepository
+from app.repositories.catalog_repository import CatalogCategoryRepository, CatalogItemRepository
+from app.repositories.flow_definition_repository import FlowDefinitionRepository
 from app.repositories.image_repository import ImageRepository
 from app.repositories.image_type_profile_repository import ImageTypeProfileRepository
-from app.schemas.image import CatalogItemRef, ImageCropRequest, ImageLibraryEntry, ImageMetadataUpdate, ImageRead
+from app.schemas.image import (
+    CatalogItemRef,
+    ImageAttachRequest,
+    ImageCropRequest,
+    ImageLibraryEntry,
+    ImageMetadataUpdate,
+    ImageRead,
+)
 from app.services import image_pipeline, image_storage_service
 from app.services.image_pipeline import ImageValidationError
 
@@ -36,6 +44,55 @@ def _with_urls(image: Image) -> ImageRead:
     return read
 
 
+async def _resolve_owner(
+    db: DbSession,
+    tenant_id: uuid.UUID,
+    *,
+    catalog_item_id: uuid.UUID | None,
+    catalog_category_id: uuid.UUID | None,
+    flow_definition_id: uuid.UUID | None,
+    flow_step_id: str | None,
+) -> dict:
+    """Validates exactly one owner shape is set and that the referenced owner exists within
+    this tenant, returning the Image-constructor kwargs for it. Shared by upload_image and
+    attach_image so the two entry points into image ownership can never diverge on
+    validation -- mirrors the DB's own ck_image_has_owner constraint.
+    """
+    if (flow_definition_id is None) != (flow_step_id is None):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "flow_definition_id and flow_step_id must be set together")
+
+    shapes_set = sum([
+        catalog_item_id is not None,
+        catalog_category_id is not None,
+        flow_definition_id is not None,
+    ])
+    if shapes_set != 1:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Exactly one of catalog_item_id, catalog_category_id, or "
+            "flow_definition_id+flow_step_id must be set",
+        )
+
+    if catalog_item_id is not None:
+        item = await CatalogItemRepository(db).get(catalog_item_id, tenant_id)
+        if item is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "catalog_item_id not found")
+        return {"catalog_item_id": catalog_item_id}
+
+    if catalog_category_id is not None:
+        category = await CatalogCategoryRepository(db).get(catalog_category_id, tenant_id)
+        if category is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "catalog_category_id not found")
+        return {"catalog_category_id": catalog_category_id}
+
+    flow = await FlowDefinitionRepository(db).get(flow_definition_id, tenant_id)
+    if flow is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "flow_definition_id not found")
+    if not any(s.get("step_id") == flow_step_id for s in flow.steps):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "flow_step_id not found in this flow")
+    return {"flow_definition_id": flow_definition_id, "flow_step_id": flow_step_id}
+
+
 async def _get_owned_image(db: DbSession, tenant_id: uuid.UUID, image_id: uuid.UUID) -> Image:
     """Loads an Image scoped to `tenant_id` -- BaseRepository.get's restaurant_id filter is
     what actually enforces tenant isolation here (an id from another tenant simply won't
@@ -54,7 +111,10 @@ async def upload_image(
     restaurant_id: uuid.UUID,
     db: DbSession,
     image_type: str = Form(...),
-    catalog_item_id: uuid.UUID = Form(...),
+    catalog_item_id: uuid.UUID | None = Form(None),
+    catalog_category_id: uuid.UUID | None = Form(None),
+    flow_definition_id: uuid.UUID | None = Form(None),
+    flow_step_id: str | None = Form(None),
     file: UploadFile = File(...),
     caption: str | None = Form(None),
     alt_text: str | None = Form(None),
@@ -67,9 +127,14 @@ async def upload_image(
     if profile is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown image_type '{image_type}'")
 
-    item = await CatalogItemRepository(db).get(catalog_item_id, tenant_id)
-    if item is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog_item_id not found")
+    owner_kwargs = await _resolve_owner(
+        db,
+        tenant_id,
+        catalog_item_id=catalog_item_id,
+        catalog_category_id=catalog_category_id,
+        flow_definition_id=flow_definition_id,
+        flow_step_id=flow_step_id,
+    )
 
     raw_bytes = await file.read()
     try:
@@ -82,7 +147,6 @@ async def upload_image(
         id=new_id,
         restaurant_id=tenant_id,
         image_type=image_type,
-        catalog_item_id=catalog_item_id,
         original_key=f"images/{new_id}/original.{validated.format.lower()}",
         original_format=validated.format.lower(),
         original_width=validated.width,
@@ -92,6 +156,7 @@ async def upload_image(
         caption=caption,
         alt_text=alt_text,
         display_order=display_order,
+        **owner_kwargs,
     )
     repo = ImageRepository(db)
     image = await repo.create(image)
@@ -160,11 +225,80 @@ async def list_images(
     restaurant_id: uuid.UUID,
     db: DbSession,
     user: CurrentUser,
-    catalog_item_id: uuid.UUID = Query(...),
+    catalog_item_id: uuid.UUID | None = Query(None),
+    catalog_category_id: uuid.UUID | None = Query(None),
+    flow_definition_id: uuid.UUID | None = Query(None),
+    flow_step_id: str | None = Query(None),
 ):
+    """Images for exactly one owner -- pass catalog_item_id, catalog_category_id, or the
+    flow_definition_id+flow_step_id pair (never more than one shape at once).
+    """
     tenant_id = resolve_tenant_id(user, restaurant_id)
-    images = await ImageRepository(db).list_for_catalog_item(catalog_item_id, tenant_id)
+    if catalog_item_id is not None:
+        images = await ImageRepository(db).list_for_catalog_item(catalog_item_id, tenant_id)
+    elif catalog_category_id is not None:
+        images = await ImageRepository(db).list_for_catalog_category(catalog_category_id, tenant_id)
+    elif flow_definition_id is not None and flow_step_id is not None:
+        images = await ImageRepository(db).list_for_flow_step(flow_definition_id, flow_step_id, tenant_id)
+    else:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Provide catalog_item_id, catalog_category_id, or flow_definition_id+flow_step_id",
+        )
     return [_with_urls(img) for img in images]
+
+
+@router.post("/{image_id}/attach", response_model=ImageRead, status_code=status.HTTP_201_CREATED)
+async def attach_image(
+    restaurant_id: uuid.UUID,
+    image_id: uuid.UUID,
+    payload: ImageAttachRequest,
+    db: DbSession,
+    user: User = Depends(_MANAGE_IMAGES),
+):
+    """The 'Choose From Media Library' reuse path: clones an already-uploaded, already-
+    processed image's storage fields (same original_key/variants -- no re-upload, no
+    reprocessing, status is 'ready' immediately) onto a new row against a new owner, with
+    its own fresh caption/display_order. The source image is untouched -- one physical
+    upload can end up attached to several owners this way (e.g. the same product shot
+    reused across two categories) without duplicating storage.
+    """
+    tenant_id = resolve_tenant_id(user, restaurant_id)
+    source = await _get_owned_image(db, tenant_id, image_id)
+    if source.status != "ready":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Source image is not ready yet")
+
+    owner_kwargs = await _resolve_owner(
+        db,
+        tenant_id,
+        catalog_item_id=payload.catalog_item_id,
+        catalog_category_id=payload.catalog_category_id,
+        flow_definition_id=payload.flow_definition_id,
+        flow_step_id=payload.flow_step_id,
+    )
+
+    new_image = Image(
+        id=uuid.uuid4(),
+        restaurant_id=tenant_id,
+        image_type=source.image_type,
+        original_key=source.original_key,
+        original_format=source.original_format,
+        original_width=source.original_width,
+        original_height=source.original_height,
+        original_size_bytes=source.original_size_bytes,
+        variants=dict(source.variants or {}),
+        status="ready",
+        resolution_warning=source.resolution_warning,
+        low_quality_reason=source.low_quality_reason,
+        caption=payload.caption,
+        alt_text=payload.alt_text,
+        display_order=payload.display_order,
+        **owner_kwargs,
+    )
+    repo = ImageRepository(db)
+    new_image = await repo.create(new_image)
+    await repo.commit()
+    return _with_urls(new_image)
 
 
 @router.patch("/{image_id}", response_model=ImageRead)
@@ -243,6 +377,9 @@ async def replace_image(
         restaurant_id=tenant_id,
         image_type=old_image.image_type,
         catalog_item_id=old_image.catalog_item_id,
+        catalog_category_id=old_image.catalog_category_id,
+        flow_definition_id=old_image.flow_definition_id,
+        flow_step_id=old_image.flow_step_id,
         original_key=f"images/{new_id}/original.{validated.format.lower()}",
         original_format=validated.format.lower(),
         original_width=validated.width,

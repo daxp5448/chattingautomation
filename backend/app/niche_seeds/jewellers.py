@@ -32,11 +32,11 @@ Inquiry-flow shape (context keys a completed inquiry's Engagement.details carrie
   own caption, in Super-Admin-set order) -- not just one representative image. See
   app/services/image_presenter.py and generic_flow_engine.py's item_context_key handling.
 
-Both welcome buttons that lead into browsing ("Explore Collection" and "Book
-Appointment") route to the same category_select entry point deliberately -- discussing
-an appointment for a specific piece starts the same way as browsing it, and this avoids
-a separate item-less appointment path that would leave `{{item_id_label}}` unset in the
-review/confirmation prompts below.
+"Book Appointment" is the sole entry point into the enquiry flow (category_select) --
+there used to be a separate "Explore Collection" button routing to the same place, but it
+was removed as a redundant duplicate of the newer "Explore Design" carousel below, which
+now owns the "browse visually" role. "Book Appointment" still leads into the same
+category_select this always used, so the underlying enquiry flow is unchanged.
 """
 
 from app.niche_seeds._media import demo_image_base
@@ -60,7 +60,7 @@ TEMPLATE = {
     "welcome_message": _WELCOME_TEXT,
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
-        {"id": "welcome:explore", "title": "\U0001f48e Explore Collection"},
+        {"id": "welcome:explore_design", "title": "\U0001f5bc️ Explore Design"},
         {"id": "welcome:appointment", "title": "\U0001f4c5 Book Appointment"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
         {"id": "welcome:store", "title": "\U0001f4cd Visit Our Store"},
@@ -160,7 +160,7 @@ TEMPLATE = {
             "prompt": _WELCOME_TEXT,
             "buttons_from": "static",
             "static_options": [
-                {"id": "welcome:explore", "title": "\U0001f48e Explore Collection"},
+                {"id": "welcome:explore_design", "title": "\U0001f5bc️ Explore Design"},
                 {"id": "welcome:appointment", "title": "\U0001f4c5 Book Appointment"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
                 {"id": "welcome:store", "title": "\U0001f4cd Visit Our Store"},
@@ -168,7 +168,7 @@ TEMPLATE = {
                 {"id": "welcome:human", "title": "\U0001f9d1 Talk to a Human"},
             ],
             "routes": {
-                "welcome:explore": "category_select",
+                "welcome:explore_design": "material_select",
                 "welcome:appointment": "category_select",
                 "welcome:offers": "offers_info",
                 "welcome:store": "location_info",
@@ -209,6 +209,47 @@ TEMPLATE = {
             "type": "human_handoff",
             "message": "\U0001f9d1 Connecting you with our jewellery expert at {{business_name}} -- someone will reply here shortly.",
             "back_target": "welcome",
+        },
+        {
+            # Isolated jewellery-only visual carousel: Material/Finish -> Category ->
+            # paginated Design gallery. A parallel path alongside the enquiry flow above
+            # (category_select/item_select/piece_details) -- not a replacement for it;
+            # "Explore Collection"/"Book Appointment" still work exactly as before. See
+            # generic_flow_engine.py's JewelleryDesignRepository-backed "jewellery_materials"
+            # source and _render_jewellery_gallery for the engine side of this.
+            # [Back -> Welcome]
+            "step_id": "material_select",
+            "type": "menu_select",
+            "prompt": "Choose your preferred finish:",
+            "buttons_from": "jewellery_materials",
+            "capture_key": "material",
+            "back_target": "welcome",
+            "next": "jewellery_category_select",
+            "show_image": False,
+            "section_title": "Materials",
+        },
+        {
+            # Material tapped -> Category list scoped to that material.
+            # [Back -> Material list]
+            "step_id": "jewellery_category_select",
+            "type": "menu_select",
+            "prompt": "Explore {{material_label}} Jewellery -- choose a category:",
+            "buttons_from": "jewellery_categories",
+            "capture_key": "jewellery_category",
+            "back_target": "material_select",
+            "next": "design_gallery",
+            "show_image": False,
+            "section_title": "Categories",
+        },
+        {
+            # Category tapped -> paginated design images (page_size per page, "Load More"
+            # for the next batch -- see JEWELLERY_LOAD_MORE_REPLY_ID in
+            # generic_flow_engine.py). Never sends the full design set at once, however
+            # large the underlying catalogue is. [Back -> Category list]
+            "step_id": "design_gallery",
+            "type": "jewellery_design_gallery",
+            "page_size": 10,
+            "back_target": "jewellery_category_select",
         },
         {
             # "Explore Collection"/"Book Appointment" tapped -> Category list.

@@ -39,6 +39,11 @@ class AddonCreate(BaseModel):
     price: float = 0
 
 
+class AddonUpdate(BaseModel):
+    name: str | None = None
+    price: float | None = None
+
+
 class AddonRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

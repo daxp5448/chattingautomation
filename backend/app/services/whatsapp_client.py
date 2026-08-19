@@ -202,6 +202,55 @@ class OutboundMessage:
         )
 
     @classmethod
+    def product_list(
+        cls,
+        to: str,
+        catalog_id: str,
+        header: str,
+        body: str,
+        retailer_ids: list[str],
+        section_title: str = "Designs",
+    ) -> "OutboundMessage":
+        """A real native WhatsApp "Multi-Product Message" -- the swipeable product-card
+        carousel pulled from a connected Meta/Facebook Commerce Catalog, distinct from
+        the sequential OutboundMessage.image fallback above (that fallback is what every
+        restaurant without a catalog connected uses today; see
+        app/services/generic_flow_engine.py::_render_jewellery_gallery). `retailer_ids`
+        must already be synced into `catalog_id` (see
+        app/services/meta_catalog_sync.py::sync_designs_to_catalog) -- Meta rejects any
+        product_retailer_id it doesn't recognize in that catalog, so callers are
+        responsible for filtering out designs with no meta_retailer_id first.
+
+        Single-section only for now, capped at Meta's 10-items-per-section limit -- Meta
+        also supports pagination across multiple sections up to 30 items total, but that
+        isn't needed yet since this matches the existing page_size=10 gallery convention
+        (see JewelleryDesignRepository.list_designs / _render_jewellery_gallery).
+        """
+        limited = retailer_ids[:10]
+        return cls(
+            to,
+            {
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "product_list",
+                    "header": {"type": "text", "text": header[:60]},
+                    "body": {"text": body[:1024]},
+                    "action": {
+                        "catalog_id": catalog_id,
+                        "sections": [
+                            {
+                                "title": section_title[:24],
+                                "product_items": [{"product_retailer_id": rid} for rid in limited],
+                            }
+                        ],
+                    },
+                },
+            },
+        )
+
+    @classmethod
     def location_request(cls, to: str, body: str) -> "OutboundMessage":
         # Prompts a native "Send location" button in WhatsApp -- the customer taps it and
         # shares their live GPS location instead of typing an address by hand.
@@ -225,10 +274,22 @@ class WhatsAppSender(Protocol):
 
 
 class GraphAPIWhatsAppSender:
-    """Sends messages via the real Meta WhatsApp Cloud API."""
+    """Sends messages via the real Meta WhatsApp Cloud API.
+
+    One instance of this class lives for the whole life of the process (every router
+    module does `_sender = GraphAPIWhatsAppSender()` once at import time, never per-
+    request) -- so self._client below is a genuinely SHARED, persistent httpx.AsyncClient,
+    not a per-call one. Reusing it means every send after the first on a given worker
+    reuses an already-open (keep-alive) TCP/TLS connection to graph.facebook.com instead
+    of paying a fresh TCP handshake + TLS negotiation on every single message -- easily
+    several hundred ms saved per send, and the dominant cost when several messages go out
+    for the same customer in quick succession (e.g. an image + its options).
+    """
 
     def __init__(self, api_version: str | None = None):
         self.api_version = api_version or settings.WHATSAPP_GRAPH_API_VERSION
+        timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+        self._client = httpx.AsyncClient(timeout=timeout)
 
     async def send(self, phone_number_id: str, access_token: str, message: OutboundMessage) -> None:
         if not phone_number_id or not access_token:
@@ -241,14 +302,12 @@ class GraphAPIWhatsAppSender:
             return
         url = f"https://graph.facebook.com/{self.api_version}/{phone_number_id}/messages"
         headers = {"Authorization": f"Bearer {access_token}"}
-        timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
 
         last_exc: Exception | None = None
         for attempt in range(_MAX_SEND_ATTEMPTS):
             try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    response = await client.post(url, json=message.payload, headers=headers)
-                    response.raise_for_status()
+                response = await self._client.post(url, json=message.payload, headers=headers)
+                response.raise_for_status()
                 return
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code < 500:
