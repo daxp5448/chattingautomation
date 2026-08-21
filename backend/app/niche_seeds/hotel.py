@@ -65,7 +65,7 @@ TEMPLATE = {
     "name": "Hotel & Guesthouse",
     "action_type": "booking",
     "icon": "\U0001f3e8",  # 🏨
-    "welcome_message": "\U0001f3e8 Welcome to [Business Name]! Book your stay in seconds.",
+    "welcome_message": "\U0001f3e8 *Welcome to [Business Name]!*\n\nBook your stay in seconds.",
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:book", "title": "\U0001f6cf Book a Room"},
@@ -173,7 +173,7 @@ TEMPLATE = {
         {
             "step_id": "welcome",
             "type": "menu_select",
-            "prompt": "\U0001f3e8 Welcome to {{restaurant_name}}! Book your stay in seconds.",
+            "prompt": "\U0001f3e8 *Welcome to {{restaurant_name}}!*\n\nBook your stay in seconds.",
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:book", "title": "\U0001f6cf Book a Room"},
@@ -196,25 +196,25 @@ TEMPLATE = {
         {
             "step_id": "human_handoff",
             "type": "human_handoff",
-            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "message": "\U0001f9d1 *Connecting you now*\n\nSomeone from our team at {{business_name}} will reply here shortly.",
             "back_target": "welcome",
         },
         {
             "step_id": "offers_info",
             "type": "message",
-            "prompt": "\U0001f389 Ask our front desk about current seasonal offers and long-stay discounts any time you book!",
+            "prompt": "\U0001f389 *Special Offers*\n\nAsk our front desk about seasonal offers and long-stay discounts any time you book!",
             "back_target": "welcome",
         },
         {
             "step_id": "location_info",
             "type": "message",
-            "prompt": "\U0001f4cd You'll find {{restaurant_name}} details and directions here -- message us if you need help finding us!",
+            "prompt": "\U0001f4cd *Our Location*\n\nYou'll find {{restaurant_name}}'s address and directions here -- message us if you need help finding us!",
             "back_target": "welcome",
         },
         {
             "step_id": "contact_info",
             "type": "message",
-            "prompt": "\U0001f4de You can reach {{restaurant_name}}'s front desk right here on WhatsApp any time.",
+            "prompt": "\U0001f4de *Contact Us*\n\nYou can reach {{restaurant_name}}'s front desk right here on WhatsApp, any time.",
             "back_target": "welcome",
         },
         {
@@ -222,7 +222,7 @@ TEMPLATE = {
             # [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
-            "prompt": "Which type of room would you like to book?",
+            "prompt": "\U0001f3e8 *Room Types*\n\nWhich type of room would you like to book?",
             "buttons_from": "categories",
             "capture_key": "category_id",
             "back_target": "welcome",
@@ -235,7 +235,7 @@ TEMPLATE = {
             # select a pending room). [Back -> Category list]
             "step_id": "room_select",
             "type": "menu_select",
-            "prompt": "Here are our {{category_id_label}} -- tap one to select:",
+            "prompt": "\U0001f6cf️ *{{category_id_label}}*\n\nTap a room below to select it:",
             "buttons_from": "items",
             "category_context_key": "category_id",
             "action": "capture_pending_item",
@@ -249,7 +249,7 @@ TEMPLATE = {
             # [Back -> Room list]
             "step_id": "checkin_select",
             "type": "menu_select",
-            "prompt": "Great choice -- *{{pending_item_name}}* ({{pending_item_price}}/night). When would you like to check in?",
+            "prompt": "Great choice -- *{{pending_item_name}}*\n\U0001f3f7️ *Price:* {{pending_item_price}}/night\n\nWhen would you like to check in?",
             "buttons_from": "dates",
             "capture_key": "check_in",
             "back_target": "room_select",
@@ -261,7 +261,7 @@ TEMPLATE = {
             # are offered (after_context_key). [Back -> check-in buttons]
             "step_id": "checkout_select",
             "type": "menu_select",
-            "prompt": "Checking in on *{{check_in_label}}*. When would you like to check out?",
+            "prompt": "\U0001f4c5 *Checking in:* {{check_in_label}}\n\nWhen would you like to check out?",
             "buttons_from": "dates",
             "after_context_key": "check_in",
             "capture_key": "check_out",
@@ -275,7 +275,7 @@ TEMPLATE = {
             # room, both already in context by this point). [Back -> check-out buttons]
             "step_id": "guests_select",
             "type": "menu_select",
-            "prompt": "How many guests will be staying?",
+            "prompt": "\U0001f465 *Guests*\n\nHow many guests will be staying?",
             "buttons_from": "static",
             "static_options": [
                 {"id": "guests:1", "title": "1 Guest"},
@@ -294,11 +294,11 @@ TEMPLATE = {
             # editable via a button. [Back -> guest count]
             "step_id": "name_confirm",
             "type": "menu_select",
-            "prompt": "Please confirm the name for this booking: *{{customer_name}}*",
+            "prompt": "\U0001f4cb Please confirm the name for this booking:\n\n*{{customer_name}}*",
             "buttons_from": "static",
             "static_options": [
-                {"id": "name:confirm", "title": "Looks Good"},
-                {"id": "name:edit", "title": "Edit Name"},
+                {"id": "name:confirm", "title": "✅ Looks Good"},
+                {"id": "name:edit", "title": "✏️ Edit Name"},
             ],
             "routes": {
                 "name:confirm": "booking_confirm",
@@ -311,7 +311,7 @@ TEMPLATE = {
         {
             "step_id": "name_edit",
             "type": "free_text_input",
-            "prompt": "Please type the name we should use for this booking:",
+            "prompt": "✏️ Please type the name we should use for this booking:",
             "capture_key": "customer_name_override",
             "allow_skip": False,
             "next": "booking_confirm",
@@ -323,17 +323,17 @@ TEMPLATE = {
             "step_id": "booking_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your stay:\n\n"
+                "\U0001f4cb *Review Your Stay*\n\n"
                 "{{cart_summary}}\n\n"
-                "\U0001f4c5 Check-in: {{check_in_label}}\n"
-                "\U0001f4c5 Check-out: {{check_out_label}}\n"
-                "\U0001f319 Nights: {{nights}}\n"
-                "\U0001f465 Guests: {{guests_label}}\n"
-                "Total: {{currency}} {{cart_total}}\n\n"
+                "\U0001f4c5 *Check-in:* {{check_in_label}}\n"
+                "\U0001f4c5 *Check-out:* {{check_out_label}}\n"
+                "\U0001f319 *Nights:* {{nights}}\n"
+                "\U0001f465 *Guests:* {{guests_label}}\n"
+                "\U0001f3f7️ *Total:* {{currency}} {{cart_total}}\n\n"
                 "Tap below to confirm."
             ),
             "buttons_from": "static",
-            "static_options": [{"id": "booking:confirm", "title": "Confirm Booking"}],
+            "static_options": [{"id": "booking:confirm", "title": "✅ Confirm Booking"}],
             "action": "create_engagement",
             "back_target": "name_confirm",
             "next": "booking_confirmed",
@@ -349,8 +349,9 @@ TEMPLATE = {
             "step_id": "booking_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Your booking is confirmed! Reference: {{last_reference_number}}.\n\n"
-                "Total: {{currency}} {{last_total}}\n"
+                "✅ *Booking Confirmed!*\n\n"
+                "Reference: {{last_reference_number}}\n"
+                "\U0001f3f7️ *Total:* {{currency}} {{last_total}}\n"
                 "{{payment_link_url}}\n\n"
                 "We look forward to hosting you at {{restaurant_name}}!"
             ),

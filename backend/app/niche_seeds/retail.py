@@ -37,7 +37,7 @@ _IMG_WOMENS = f"{_DEMO_IMG_BASE}/womens.jpg"
 _IMG_FOOTWEAR = f"{_DEMO_IMG_BASE}/footwear.jpg"
 _IMG_ACCESSORIES = f"{_DEMO_IMG_BASE}/accessories.jpg"
 
-_WELCOME_TEXT = "\U0001f455 Welcome to {{business_name}}! Shop the latest styles in seconds."
+_WELCOME_TEXT = "\U0001f455 *Welcome to {{business_name}}!*\n\nShop the latest styles in seconds."
 
 
 TEMPLATE = {
@@ -175,14 +175,14 @@ TEMPLATE = {
         {
             "step_id": "offers_info",
             "type": "message",
-            "prompt": "\U0001f381 Ask our team about today's seasonal discounts and combo offers any time you shop!",
+            "prompt": "\U0001f381 *Offers*\n\nAsk our team about today's seasonal discounts and combo offers any time you shop!",
             "back_target": "welcome",
         },
         {
             "step_id": "store_info",
             "type": "message",
             "prompt": (
-                "\U0001f3ea {{business_name}}\n\n[Address will appear here once the business "
+                "\U0001f3ea *{{business_name}}*\n\n[Address will appear here once the business "
                 "adds it in Settings.]\n\nTap \U0001f9d1 Talk to a Human if you'd like directions right now."
             ),
             "back_target": "welcome",
@@ -191,8 +191,8 @@ TEMPLATE = {
             "step_id": "contact_info",
             "type": "message",
             "prompt": (
-                "\U0001f4de {{business_name}}\n\nPhone: [add your number in Settings]\n"
-                "Hours: [add your hours in Settings]\n\n"
+                "\U0001f4de *{{business_name}}*\n\n\U0001f4f1 Phone: [add your number in Settings]\n"
+                "\U0001f552 Hours: [add your hours in Settings]\n\n"
                 "Or tap \U0001f9d1 Talk to a Human from the main menu to chat with our team right now."
             ),
             "back_target": "welcome",
@@ -200,14 +200,14 @@ TEMPLATE = {
         {
             "step_id": "human_handoff",
             "type": "human_handoff",
-            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "message": "\U0001f9d1 *Connecting you with our team*\n\nSomeone at {{business_name}} will reply here shortly.",
             "back_target": "welcome",
         },
         {
             # "Shop Now" tapped -> Category list. [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
-            "prompt": "What would you like to shop for?",
+            "prompt": "\U0001f455 *What would you like to shop for?*",
             "buttons_from": "categories",
             "capture_key": "category_id",
             "back_target": "welcome",
@@ -220,7 +220,7 @@ TEMPLATE = {
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
-            "prompt": "Here's our {{category_id_label}} collection -- tap an item to add it:",
+            "prompt": "\U0001f455 *{{category_id_label}}*\n\nTap an item below to add it:",
             "buttons_from": "items",
             "category_context_key": "category_id",
             "action": "capture_pending_item",
@@ -234,7 +234,7 @@ TEMPLATE = {
             # [Back -> Item list]
             "step_id": "quantity_select",
             "type": "quantity_input",
-            "prompt": "How many *{{pending_item_name}}* ({{pending_item_price}}) would you like?",
+            "prompt": "How many *{{pending_item_name}}* would you like?\n\n\U0001f3f7️ *Price:* {{pending_item_price}}",
             "action": "add_to_cart",
             "back_target": "item_select",
             "next": "cart_menu",
@@ -245,7 +245,7 @@ TEMPLATE = {
             # and directly from welcome's "View Cart" button. [Back -> Category list]
             "step_id": "cart_menu",
             "type": "menu_select",
-            "prompt": "\U0001f6cd️ Your bag so far:\n\n{{cart_summary}}\n\nTotal: {{currency}} {{cart_total}}\n\nWhat next?",
+            "prompt": "\U0001f6cd️ *Your Bag*\n\n{{cart_summary}}\n\n\U0001f3f7️ *Total:* {{currency}} {{cart_total}}\n\nWhat next?",
             "buttons_from": "static",
             "static_options": [
                 {"id": "cart:add_more", "title": "➕ Add More Items"},
@@ -264,7 +264,7 @@ TEMPLATE = {
             # skippable for store pickup. [Back -> Cart menu]
             "step_id": "address_capture",
             "type": "free_text_input",
-            "prompt": "Please share your delivery address (or tap Skip for store pickup):",
+            "prompt": "\U0001f4cd Please share your delivery address (or tap Skip for store pickup):",
             "capture_key": "delivery_address",
             "allow_skip": True,
             "accepts_location": True,
@@ -277,10 +277,10 @@ TEMPLATE = {
             "step_id": "order_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your order:\n\n"
+                "\U0001f4cb *Please review your order:*\n\n"
                 "{{cart_summary}}\n\n"
-                "Total: {{currency}} {{cart_total}}\n"
-                "\U0001f4cd Delivery: {{delivery_address}}\n\n"
+                "\U0001f3f7️ *Total:* {{currency}} {{cart_total}}\n"
+                "\U0001f4cd *Delivery:* {{delivery_address}}\n\n"
                 "Tap below to place your order."
             ),
             "buttons_from": "static",
@@ -299,8 +299,9 @@ TEMPLATE = {
             "step_id": "order_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Order placed! Reference: {{last_reference_number}}.\n\n"
-                "Total: {{currency}} {{last_total}}\n"
+                "✅ *Order placed!*\n\n"
+                "Reference: {{last_reference_number}}\n"
+                "\U0001f3f7️ *Total:* {{currency}} {{last_total}}\n"
                 "{{payment_link_url}}\n\n"
                 "We'll start packing your order right away. Thank you for shopping with "
                 "{{business_name}}!"

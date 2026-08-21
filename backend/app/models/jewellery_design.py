@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -70,3 +71,18 @@ class JewelleryDesign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # (and every newly downloaded) design starts here, since no restaurant has a Commerce
     # Catalog connected yet; the sync function only ever sets this, nothing else does.
     meta_retailer_id: Mapped[str | None] = mapped_column(String(200))
+
+    # Pre-uploaded WhatsApp media id (see app/services/meta_media_upload.py) -- lets a
+    # frequently-resent design image be sent as {"image": {"id": ...}} instead of
+    # {"image": {"link": ...}}, which Meta can deliver near-instantly since it already
+    # has the bytes, rather than having to fetch/validate the URL on every single send.
+    # A media_id is only valid for sends FROM the specific phone_number_id it was
+    # uploaded through (meta_media_id_phone_number_id records which one), and Meta does
+    # not guarantee an id stays valid forever -- meta_media_id_uploaded_at lets the
+    # sender treat one older than a safety margin as stale and silently fall back to
+    # `link` (re-uploading lazily on the next send) rather than risk a failed send on an
+    # id Meta has already invalidated. All three are NULL until first used; nothing sets
+    # them eagerly/at startup -- see _render_jewellery_gallery's lazy upload-on-first-use.
+    meta_media_id: Mapped[str | None] = mapped_column(String(200))
+    meta_media_id_phone_number_id: Mapped[str | None] = mapped_column(String(50))
+    meta_media_id_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

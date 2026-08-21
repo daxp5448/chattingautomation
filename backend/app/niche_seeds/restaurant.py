@@ -39,7 +39,7 @@ _IMG_MAIN_COURSE = f"{_DEMO_IMG_BASE}/main_course.jpg"
 _IMG_BEVERAGES = f"{_DEMO_IMG_BASE}/beverages.jpg"
 _IMG_DESSERTS = f"{_DEMO_IMG_BASE}/desserts.jpg"
 
-_WELCOME_TEXT = "\U0001f37d Welcome to {{business_name}}! Order your favourites in seconds."
+_WELCOME_TEXT = "\U0001f37d *Welcome to {{business_name}}!*\nOrder your favourites in seconds."
 
 
 TEMPLATE = {
@@ -177,14 +177,14 @@ TEMPLATE = {
         {
             "step_id": "offers_info",
             "type": "message",
-            "prompt": "\U0001f381 Ask our team about today's specials and combo offers any time you order!",
+            "prompt": "\U0001f381 *Today's Offers*\n\nAsk our team about today's specials and combo offers any time you order!",
             "back_target": "welcome",
         },
         {
             "step_id": "location_info",
             "type": "message",
             "prompt": (
-                "\U0001f4cd {{business_name}}\n\n[Address will appear here once the business "
+                "\U0001f4cd *{{business_name}}*\n\n[Address will appear here once the business "
                 "adds it in Settings.]\n\nTap \U0001f9d1 Talk to a Human if you'd like directions right now."
             ),
             "back_target": "welcome",
@@ -193,8 +193,8 @@ TEMPLATE = {
             "step_id": "contact_info",
             "type": "message",
             "prompt": (
-                "\U0001f4de {{business_name}}\n\nPhone: [add your number in Settings]\n"
-                "Hours: [add your hours in Settings]\n\n"
+                "\U0001f4de *{{business_name}}*\n\n\U0001f4de Phone: [add your number in Settings]\n"
+                "\U0001f550 Hours: [add your hours in Settings]\n\n"
                 "Or tap \U0001f9d1 Talk to a Human from the main menu to chat with our team right now."
             ),
             "back_target": "welcome",
@@ -202,14 +202,14 @@ TEMPLATE = {
         {
             "step_id": "human_handoff",
             "type": "human_handoff",
-            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "message": "\U0001f9d1 Connecting you with our team at *{{business_name}}* -- someone will reply here shortly.",
             "back_target": "welcome",
         },
         {
             # "Order Now" tapped -> Category list. [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
-            "prompt": "What would you like to order from?",
+            "prompt": "\U0001f37d What would you like to order from?",
             "buttons_from": "categories",
             "capture_key": "category_id",
             "back_target": "welcome",
@@ -222,7 +222,7 @@ TEMPLATE = {
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
-            "prompt": "Here's our {{category_id_label}} menu -- tap an item to add it:",
+            "prompt": "Here's our *{{category_id_label}}* menu -- tap an item to add it:",
             "buttons_from": "items",
             "category_context_key": "category_id",
             "action": "capture_pending_item",
@@ -236,7 +236,7 @@ TEMPLATE = {
             # [Back -> Item list]
             "step_id": "quantity_select",
             "type": "quantity_input",
-            "prompt": "How many *{{pending_item_name}}* ({{pending_item_price}}) would you like?",
+            "prompt": "How many *{{pending_item_name}}* would you like?\n\n\U0001f3f7️ *Price:* {{pending_item_price}} each",
             "action": "add_to_cart",
             "back_target": "item_select",
             "next": "cart_menu",
@@ -247,7 +247,7 @@ TEMPLATE = {
             # and directly from welcome's "View Cart" button. [Back -> Category list]
             "step_id": "cart_menu",
             "type": "menu_select",
-            "prompt": "\U0001f6d2 Your cart so far:\n\n{{cart_summary}}\n\nTotal: {{currency}} {{cart_total}}\n\nWhat next?",
+            "prompt": "\U0001f6d2 *Your Cart*\n\n{{cart_summary}}\n\n\U0001f4b0 *Total: {{currency}} {{cart_total}}*\n\nWhat would you like to do next?",
             "buttons_from": "static",
             "static_options": [
                 {"id": "cart:add_more", "title": "➕ Add More Items"},
@@ -266,7 +266,7 @@ TEMPLATE = {
             # skippable for dine-in/pickup. [Back -> Cart menu]
             "step_id": "address_capture",
             "type": "free_text_input",
-            "prompt": "Please share your delivery address (or tap Skip for dine-in/pickup):",
+            "prompt": "\U0001f4cd Please share your delivery address (or tap Skip for dine-in/pickup):",
             "capture_key": "delivery_address",
             "allow_skip": True,
             "accepts_location": True,
@@ -279,10 +279,10 @@ TEMPLATE = {
             "step_id": "order_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your order:\n\n"
+                "\U0001f9fe *Review Your Order*\n\n"
                 "{{cart_summary}}\n\n"
-                "Total: {{currency}} {{cart_total}}\n"
-                "\U0001f4cd Delivery: {{delivery_address}}\n\n"
+                "\U0001f4b0 *Total: {{currency}} {{cart_total}}*\n"
+                "\U0001f4cd *Delivery:* {{delivery_address}}\n\n"
                 "Tap below to place your order."
             ),
             "buttons_from": "static",
@@ -301,11 +301,11 @@ TEMPLATE = {
             "step_id": "order_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Order placed! Reference: {{last_reference_number}}.\n\n"
-                "Total: {{currency}} {{last_total}}\n"
+                "✅ *Order placed!* Reference: {{last_reference_number}}\n\n"
+                "\U0001f4b0 *Total: {{currency}} {{last_total}}*\n"
                 "{{payment_link_url}}\n\n"
-                "We'll start preparing your order right away. Thank you for choosing "
-                "{{business_name}}!"
+                "We'll start preparing your order right away -- thank you for choosing "
+                "*{{business_name}}*!"
             ),
             "back_target": None,
             "terminal": True,

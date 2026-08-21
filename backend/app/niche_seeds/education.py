@@ -60,7 +60,7 @@ TEMPLATE = {
     "name": "Education & Coaching",
     "action_type": "inquiry",
     "icon": "\U0001f393",  # 🎓
-    "welcome_message": "\U0001f393 Welcome to [Business Name]! Find the right course for you today.",
+    "welcome_message": "\U0001f393 *Welcome to [Business Name]!*\n\nFind the right course for you today.",
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:browse", "title": "\U0001f4da Explore Courses"},
@@ -168,7 +168,7 @@ TEMPLATE = {
         {
             "step_id": "welcome",
             "type": "menu_select",
-            "prompt": "\U0001f393 Welcome to {{restaurant_name}}! Find the right course for you today.",
+            "prompt": "\U0001f393 *Welcome to {{restaurant_name}}!*\n\nFind the right course for you today.",
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:browse", "title": "\U0001f4da Explore Courses"},
@@ -191,32 +191,32 @@ TEMPLATE = {
         {
             "step_id": "human_handoff",
             "type": "human_handoff",
-            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "message": "\U0001f9d1 *Connecting you now*\n\nSomeone from our team at {{business_name}} will reply here shortly.",
             "back_target": "welcome",
         },
         {
             "step_id": "offers_info",
             "type": "message",
-            "prompt": "\U0001f389 Ask our team about current offers and early-bird discounts on select courses any time!",
+            "prompt": "\U0001f389 *Special Offers*\n\nAsk our team about current offers and early-bird discounts on select courses any time!",
             "back_target": "welcome",
         },
         {
             "step_id": "location_info",
             "type": "message",
-            "prompt": "\U0001f4cd You'll find {{restaurant_name}}'s center details and directions here -- message us if you need help finding us!",
+            "prompt": "\U0001f4cd *Our Center*\n\nYou'll find {{restaurant_name}}'s center details and directions here -- message us if you need help finding us!",
             "back_target": "welcome",
         },
         {
             "step_id": "contact_info",
             "type": "message",
-            "prompt": "\U0001f4de You can reach {{restaurant_name}}'s admissions team right here on WhatsApp any time.",
+            "prompt": "\U0001f4de *Contact Us*\n\nYou can reach {{restaurant_name}}'s admissions team right here on WhatsApp, any time.",
             "back_target": "welcome",
         },
         {
             # "Explore Courses" / "Enroll Now" tapped -> Category list. [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
-            "prompt": "Which category are you interested in?",
+            "prompt": "\U0001f393 *Categories*\n\nWhich category are you interested in?",
             "buttons_from": "categories",
             "capture_key": "category_id",
             "back_target": "welcome",
@@ -229,7 +229,7 @@ TEMPLATE = {
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
-            "prompt": "Here are our {{category_id_label}} courses -- tap one to view details:",
+            "prompt": "\U0001f4da *{{category_id_label}} Courses*\n\nTap one to view details:",
             "buttons_from": "items",
             "category_context_key": "category_id",
             "capture_key": "item_id",
@@ -243,7 +243,7 @@ TEMPLATE = {
             # Optional preferred batch/timing note. [Back -> Course list]
             "step_id": "batch_capture",
             "type": "free_text_input",
-            "prompt": "What's your preferred batch or timing for *{{item_id_label}}*? (or tap Skip)",
+            "prompt": "\U0001f5d3️ *{{item_id_label}}*\n\nWhat's your preferred batch or timing? (or tap Skip)",
             "capture_key": "preferred_batch",
             "allow_skip": True,
             "back_target": "item_select",
@@ -253,7 +253,7 @@ TEMPLATE = {
             # Optional free-form requirements. [Back -> preferred batch note]
             "step_id": "requirements_capture",
             "type": "free_text_input",
-            "prompt": "Any specific requirements we should know (current level, target score, doubts)? (or tap Skip)",
+            "prompt": "\U0001f4dd *Anything Else?*\n\nShare your current level, target score or any doubts. (or tap Skip)",
             "capture_key": "requirements",
             "allow_skip": True,
             "back_target": "batch_capture",
@@ -264,11 +264,11 @@ TEMPLATE = {
             # button. [Back -> requirements note]
             "step_id": "name_confirm",
             "type": "menu_select",
-            "prompt": "Please confirm the name we should use for this inquiry: *{{customer_name}}*",
+            "prompt": "\U0001f4cb Please confirm the name we should use for this inquiry:\n\n*{{customer_name}}*",
             "buttons_from": "static",
             "static_options": [
-                {"id": "name:confirm", "title": "Looks Good"},
-                {"id": "name:edit", "title": "Edit Name"},
+                {"id": "name:confirm", "title": "✅ Looks Good"},
+                {"id": "name:edit", "title": "✏️ Edit Name"},
             ],
             "routes": {
                 "name:confirm": "inquiry_confirm",
@@ -281,7 +281,7 @@ TEMPLATE = {
         {
             "step_id": "name_edit",
             "type": "free_text_input",
-            "prompt": "Please type the name we should use for this inquiry:",
+            "prompt": "✏️ Please type the name we should use for this inquiry:",
             "capture_key": "customer_name_override",
             "allow_skip": False,
             "next": "inquiry_confirm",
@@ -292,14 +292,14 @@ TEMPLATE = {
             "step_id": "inquiry_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your inquiry:\n\n"
-                "\U0001f393 Course: {{item_id_label}}\n"
-                "\U0001f5d3️ Preferred Batch: {{preferred_batch}}\n"
-                "\U0001f4dd Requirements: {{requirements}}\n\n"
+                "\U0001f4cb *Review Your Inquiry*\n\n"
+                "\U0001f393 *Course:* {{item_id_label}}\n"
+                "\U0001f5d3️ *Preferred Batch:* {{preferred_batch}}\n"
+                "\U0001f4dd *Requirements:* {{requirements}}\n\n"
                 "Tap below to submit."
             ),
             "buttons_from": "static",
-            "static_options": [{"id": "inquiry:submit", "title": "Submit Inquiry"}],
+            "static_options": [{"id": "inquiry:submit", "title": "✅ Submit Inquiry"}],
             "action": "create_engagement",
             "back_target": "name_confirm",
             "next": "inquiry_confirmed",
@@ -313,7 +313,8 @@ TEMPLATE = {
             "step_id": "inquiry_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Thank you! Your inquiry has been submitted. Reference: {{last_reference_number}}.\n\n"
+                "✅ *Inquiry Submitted!*\n\n"
+                "Reference: {{last_reference_number}}\n\n"
                 "Our counselor will reach out to you shortly regarding {{item_id_label}}."
             ),
             "back_target": None,

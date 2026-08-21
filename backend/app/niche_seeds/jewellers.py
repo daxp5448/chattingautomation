@@ -182,14 +182,14 @@ TEMPLATE = {
         {
             "step_id": "offers_info",
             "type": "message",
-            "prompt": "\U0001f381 Ask our team about today's special offers and festive discounts any time you enquire!",
+            "prompt": "\U0001f381 *Today's Offers*\n\nAsk our team about special offers and festive discounts any time you enquire!",
             "back_target": "welcome",
         },
         {
             "step_id": "location_info",
             "type": "message",
             "prompt": (
-                "\U0001f4cd {{business_name}}\n\n[Address will appear here once the business "
+                "\U0001f4cd *{{business_name}}*\n\n[Address will appear here once the business "
                 "adds it in Settings.]\n\nTap \U0001f9d1 Talk to a Human if you'd like directions right now."
             ),
             "back_target": "welcome",
@@ -198,8 +198,8 @@ TEMPLATE = {
             "step_id": "contact_info",
             "type": "message",
             "prompt": (
-                "\U0001f4de {{business_name}}\n\nPhone: [add your number in Settings]\n"
-                "Hours: [add your hours in Settings]\n\n"
+                "\U0001f4de *{{business_name}}*\n\n\U0001f4de Phone: [add your number in Settings]\n"
+                "\U0001f550 Hours: [add your hours in Settings]\n\n"
                 "Or tap \U0001f9d1 Talk to a Human from the main menu to chat with our team right now."
             ),
             "back_target": "welcome",
@@ -256,7 +256,7 @@ TEMPLATE = {
             # [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
-            "prompt": "What would you like to explore?",
+            "prompt": "\U0001f48d What would you like to explore today?",
             "buttons_from": "categories",
             "capture_key": "category_id",
             "back_target": "welcome",
@@ -269,7 +269,7 @@ TEMPLATE = {
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
-            "prompt": "Here's our {{category_id_label}} collection -- tap a piece to enquire about it:",
+            "prompt": "Here's our *{{category_id_label}}* collection -- tap a piece to enquire about it:",
             "buttons_from": "items",
             "category_context_key": "category_id",
             "capture_key": "item_id",
@@ -287,11 +287,11 @@ TEMPLATE = {
             # [Back -> Piece list]
             "step_id": "piece_details",
             "type": "menu_select",
-            "prompt": "*{{item_id_label}}*\n{{pending_item_price}}\n\nTake a look, then tap below when you're ready to enquire.",
+            "prompt": "*{{item_id_label}}*\n\n\U0001f3f7️ *Price:* {{pending_item_price}}\n\nTake a look at the photos below, then tap when you're ready to enquire.",
             "item_context_key": "item_id",
             "show_image": True,
             "buttons_from": "static",
-            "static_options": [{"id": "piece:enquire", "title": "Enquire About This Piece"}],
+            "static_options": [{"id": "piece:enquire", "title": "\U0001f48e Enquire Now"}],
             "routes": {"piece:enquire": "visit_capture"},
             "next": "visit_capture",
             "back_target": "item_select",
@@ -300,7 +300,7 @@ TEMPLATE = {
             # Optional preferred visit note. [Back -> Piece details]
             "step_id": "visit_capture",
             "type": "free_text_input",
-            "prompt": "Would you like to visit us to see *{{item_id_label}}* in person? Let us know your preferred day/time (or tap Skip to enquire online instead):",
+            "prompt": "\U0001f4c5 Would you like to visit us to see *{{item_id_label}}* in person?\n\nLet us know your preferred day and time, or tap Skip to enquire online instead.",
             "capture_key": "preferred_visit",
             "allow_skip": True,
             "back_target": "piece_details",
@@ -310,7 +310,7 @@ TEMPLATE = {
             # Optional free-form requirements (customization/budget). [Back -> visit note]
             "step_id": "requirements_capture",
             "type": "free_text_input",
-            "prompt": "Any customization or budget preferences we should know? (or tap Skip)",
+            "prompt": "\U0001f4dd Any customization or budget preferences we should know? (or tap Skip)",
             "capture_key": "requirements",
             "allow_skip": True,
             "back_target": "visit_capture",
@@ -321,7 +321,7 @@ TEMPLATE = {
             # a button. [Back -> requirements note]
             "step_id": "name_confirm",
             "type": "menu_select",
-            "prompt": "Please confirm the name we should use for this enquiry: *{{customer_name}}*",
+            "prompt": "\U0001f9d1 Please confirm the name we should use for this enquiry:\n\n*{{customer_name}}*",
             "buttons_from": "static",
             "static_options": [
                 {"id": "name:confirm", "title": "Looks Good"},
@@ -349,10 +349,10 @@ TEMPLATE = {
             "step_id": "inquiry_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your enquiry:\n\n"
-                "\U0001f48d Piece: {{item_id_label}}\n"
-                "\U0001f4c5 Preferred Visit: {{preferred_visit}}\n"
-                "\U0001f4dd Notes: {{requirements}}\n\n"
+                "\U0001f48e *Review Your Enquiry*\n\n"
+                "\U0001f48d *Piece:* {{item_id_label}}\n"
+                "\U0001f4c5 *Preferred Visit:* {{preferred_visit}}\n"
+                "\U0001f4dd *Notes:* {{requirements}}\n\n"
                 "Tap below to submit."
             ),
             "buttons_from": "static",
@@ -370,8 +370,8 @@ TEMPLATE = {
             "step_id": "inquiry_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Thank you! Your enquiry has been submitted. Reference: {{last_reference_number}}.\n\n"
-                "Our jewellery expert will reach out shortly to discuss {{item_id_label}} and arrange a "
+                "✅ *Thank you!* Your enquiry has been submitted.\nReference: {{last_reference_number}}\n\n"
+                "Our jewellery expert will reach out shortly to discuss *{{item_id_label}}* and arrange a "
                 "visit if you'd like."
             ),
             "back_target": None,

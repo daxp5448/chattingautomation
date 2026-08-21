@@ -401,7 +401,7 @@ async def test_is_demo_guard_blocks_payment_link_and_staff_notification_even_whe
 # --- "try another industry" -----------------------------------------------------------------
 
 
-async def test_menu_keyword_returns_to_picker_without_disturbing_original_niche_state(db_session):
+async def test_industries_keyword_returns_to_picker_without_disturbing_original_niche_state(db_session):
     sentinel = await _make_sentinel(db_session)
     await _seed_all_niches(db_session, sentinel)
     sender = InMemoryWhatsAppSender()
@@ -420,7 +420,7 @@ async def test_menu_keyword_returns_to_picker_without_disturbing_original_niche_
     state_before = (await db_session.execute(select(GenericConversationState).where(GenericConversationState.customer_id == customer.id))).scalar_one()
     assert state_before.current_step == "category_select"
 
-    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="menu"), wa_message_id=_next_wamid())
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="industries"), wa_message_id=_next_wamid())
     picker_text = _last_picker_text(sender)
     assert "Retail" in picker_text  # picker shown again
 
@@ -580,3 +580,106 @@ async def test_purge_removes_only_old_demo_data_and_never_touches_real_restauran
 
     real_still_there = (await db_session.execute(select(Customer).where(Customer.id == real_customer.id))).scalar_one_or_none()
     assert real_still_there is not None
+
+
+async def test_typing_menu_mid_order_does_not_discard_the_order(db_session):
+    """Real bug, found from a live customer's actual conversation log: "menu" used to be
+    a global leave-to-picker keyword, so a restaurant customer mid-order who typed "menu"
+    (an entirely ordinary thing to type in a restaurant bot -- wanting to see the food
+    menu again) got yanked out to the cross-niche industry picker instead, silently
+    discarding their in-progress order; the next thing they tapped ("Custom", meant for
+    the quantity prompt they'd already been shown) landed on the picker instead and did
+    nothing. "menu" is no longer in _LEAVE_TO_PICKER_WORDS -- this proves a restaurant
+    customer can type it mid-order and keep going exactly where they left off.
+    """
+    sentinel = await _make_sentinel(db_session)
+    await _seed_all_niches(db_session, sentinel)
+    sender = InMemoryWhatsAppSender()
+    phone = "919999955556"
+
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="hi"), wa_message_id=_next_wamid())
+    await handle_demo_inbound(
+        db_session, sender, sentinel, phone,
+        GenericInteraction(kind="list_reply", reply_id="demo:pick:restaurant", text="Restaurant"),
+        wa_message_id=_next_wamid(),
+    )
+    restaurant = (await db_session.execute(select(Restaurant).where(Restaurant.niche_type == "restaurant", Restaurant.is_demo.is_(True)))).scalar_one()
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="button_reply", reply_id="welcome:order", text="Order Now"), wa_message_id=_next_wamid())
+
+    from app.models.catalog import CatalogCategory, CatalogItem
+
+    category = (await db_session.execute(select(CatalogCategory).where(CatalogCategory.restaurant_id == restaurant.id, CatalogCategory.name == "Starters"))).scalar_one()
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="button_reply", reply_id=f"category:{category.id}", text="Starters"), wa_message_id=_next_wamid())
+    item = (await db_session.execute(select(CatalogItem).where(CatalogItem.restaurant_id == restaurant.id, CatalogItem.category_id == category.id))).scalars().first()
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="button_reply", reply_id=f"item:{item.id}", text=item.name), wa_message_id=_next_wamid())
+
+    customer = (await db_session.execute(select(Customer).where(Customer.restaurant_id == restaurant.id, Customer.phone == phone))).scalar_one()
+    state_before = (await db_session.execute(select(GenericConversationState).where(GenericConversationState.customer_id == customer.id))).scalar_one()
+    assert state_before.current_step == "quantity_select"
+
+    # The actual bug trigger: typing "menu" while at the quantity prompt.
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="menu"), wa_message_id=_next_wamid())
+
+    session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
+    assert session_row.active_restaurant_id == restaurant.id  # still in the restaurant demo, not bounced to the picker
+
+    await db_session.refresh(state_before)
+    assert state_before.current_step == "quantity_select"  # order/step untouched
+
+    # Tapping Custom now must actually reach the quantity prompt, not the picker.
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="button_reply", reply_id="qty:custom", text="Custom"), wa_message_id=_next_wamid())
+    assert "quantity" in _last_text(sender).lower()
+
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="5"), wa_message_id=_next_wamid())
+    await db_session.refresh(state_before)
+    assert state_before.current_step == "cart_menu"
+    assert state_before.context["cart"][0]["qty"] == 5
+
+
+async def test_finishing_an_order_then_texting_offers_continue_or_switch_industry(db_session):
+    """Real bug, found from a live customer's actual conversation log: after an order
+    finished, ANY further text silently reset straight back into that SAME niche's own
+    welcome (generic_flow_engine.py's terminal-message-step fallback) -- no explanation,
+    no way back to the cross-niche picker short of a word ("menu") that collided with
+    real niche vocabulary and had to be removed. Now the demo bot explicitly asks with
+    two real buttons instead of guessing from free text.
+    """
+    sentinel = await _make_sentinel(db_session)
+    await _seed_all_niches(db_session, sentinel)
+    sender = InMemoryWhatsAppSender()
+    phone = "919999955557"
+
+    retail = await _run_full_retail_order(db_session, sender, sentinel, phone)
+
+    # Any further message now gets the explicit offer, not a silent reset.
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="hello"), wa_message_id=_next_wamid())
+    last = sender.sent[-1]
+    assert last.payload["type"] == "interactive"
+    button_ids = {b["reply"]["id"] for b in last.payload["interactive"]["action"]["buttons"]}
+    assert button_ids == {"demo:continue", "demo:menu"}
+
+    # Tapping "Continue Browsing" restarts the SAME niche (retail), not the picker.
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="button_reply", reply_id="demo:continue", text="Continue Browsing"), wa_message_id=_next_wamid())
+    session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
+    assert session_row.active_restaurant_id == retail.id
+
+    customer = (await db_session.execute(select(Customer).where(Customer.restaurant_id == retail.id, Customer.phone == phone))).scalar_one()
+    state = (await db_session.execute(select(GenericConversationState).where(GenericConversationState.customer_id == customer.id))).scalar_one()
+    assert state.current_step == "welcome"
+
+
+async def test_finishing_an_order_then_tapping_try_another_industry_shows_the_picker(db_session):
+    sentinel = await _make_sentinel(db_session)
+    await _seed_all_niches(db_session, sentinel)
+    sender = InMemoryWhatsAppSender()
+    phone = "919999955558"
+
+    await _run_full_retail_order(db_session, sender, sentinel, phone)
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="text", text="hello"), wa_message_id=_next_wamid())
+
+    await handle_demo_inbound(db_session, sender, sentinel, phone, GenericInteraction(kind="button_reply", reply_id="demo:menu", text="Try Another Industry"), wa_message_id=_next_wamid())
+    picker_text = _last_picker_text(sender)
+    assert "Retail" in picker_text
+
+    session_row = (await db_session.execute(select(DemoSession).where(DemoSession.customer_phone == phone))).scalar_one()
+    assert session_row.active_restaurant_id is None

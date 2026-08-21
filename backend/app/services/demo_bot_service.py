@@ -27,6 +27,8 @@ from app.models.niche_template import NicheTemplate
 from app.models.restaurant import Restaurant
 from app.repositories.customer_repository import CustomerRepository
 from app.repositories.demo_session_repository import DemoSessionRepository
+from app.repositories.flow_definition_repository import FlowDefinitionRepository
+from app.repositories.generic_conversation_repository import GenericConversationStateRepository
 from app.repositories.niche_template_repository import NicheTemplateRepository
 from app.services.generic_flow_engine import (
     GenericInteraction,
@@ -43,9 +45,25 @@ logger = logging.getLogger(__name__)
 # through to the engine's own existing greeting-reset behavior (generic_flow_engine.py's
 # _looks_like_greeting), which just restarts that same niche, the more natural "this is
 # what a real customer would experience" behavior for a demo.
-_LEAVE_TO_PICKER_WORDS = {"menu", "industries", "industry", "other industry", "switch"}
+#
+# "menu" and "switch" used to be in this set and were a real, reproducible bug: a
+# restaurant customer mid-order who typed "menu" wanting to see the food menu again (an
+# entirely ordinary thing to type in a restaurant bot) got yanked out to the cross-niche
+# industry picker instead, silently discarding their in-progress order -- same problem
+# "switch" would cause for an electronics/automobile customer asking about a physical
+# switch/gear-switch product. Only words with no plausible collision with real niche
+# vocabulary stay here; the explicit "Try Another Industry"-style BUTTON (matched via
+# _MENU_REPLY_ID, not this free-text set) is unaffected and remains the reliable way to
+# leave a niche.
+_LEAVE_TO_PICKER_WORDS = {"industries", "industry", "other industry"}
 _PICK_PREFIX = "demo:pick:"
 _MENU_REPLY_ID = "demo:menu"
+# Tapped from the "what next?" offer sent once a niche's own conversation reaches a
+# terminal step (order placed / enquiry submitted / etc) -- see _terminal_step_offer
+# below. Restarts the SAME niche from its welcome step, the explicit-choice counterpart
+# of what used to happen silently (and confusingly, per real customer feedback) the
+# instant any text was typed after a finished order.
+_CONTINUE_REPLY_ID = "demo:continue"
 
 
 async def _already_processed(session, wa_message_id: str | None) -> bool:
@@ -120,7 +138,7 @@ def _resolve_free_text_pick(templates: list[NicheTemplate], text: str) -> str | 
     return None
 
 
-def _welcome_banner_messages(sentinel_restaurant: Restaurant, from_phone: str) -> list[OutboundMessage]:
+async def _welcome_banner_messages(session, sender: WhatsAppSender, sentinel_restaurant: Restaurant, from_phone: str) -> list[OutboundMessage]:
     """KelvionTech branding shown before the industry picker -- deliberately read from the
     sentinel restaurant's existing logo_url/cover_image_url fields (same ones editable on
     its own Settings page) rather than hardcoded here, so changing the demo's branding is
@@ -130,20 +148,30 @@ def _welcome_banner_messages(sentinel_restaurant: Restaurant, from_phone: str) -
     them together with the picker text via send_generic_messages_batch, which guarantees
     every image here arrives before the text (sequential dispatch, not concurrent -- see
     that function's own docstring for why).
+
+    Sent by pre-uploaded Meta media_id when a fresh one is cached (this banner is shown
+    on EVERY "Hi" to this number -- the single most frequently resent image in the whole
+    platform, so the fast path matters most here), via _Engine._media_message -- see
+    that method's own docstring for the fallback chain. _Engine is instantiated here
+    purely to reuse that one method, the same established pattern
+    whatsapp_flow_order_service.py already uses for _create_engagement/_price_label.
     """
+    from app.services.generic_flow_engine import _Engine
+
+    engine = _Engine(session, sender, dry_run=False)
     messages = []
     if sentinel_restaurant.logo_url:
-        messages.append(OutboundMessage.image(from_phone, sentinel_restaurant.logo_url, "👋 Welcome to KelvionTech!"))
+        messages.append(await engine._media_message(sentinel_restaurant, sentinel_restaurant.logo_url, "👋 Welcome to KelvionTech!", from_phone))
     if sentinel_restaurant.cover_image_url:
-        messages.append(OutboundMessage.image(
-            from_phone, sentinel_restaurant.cover_image_url,
-            "One WhatsApp Business OS, any industry -- pick yours below to get started 👇",
+        messages.append(await engine._media_message(
+            sentinel_restaurant, sentinel_restaurant.cover_image_url,
+            "One WhatsApp Business OS, any industry -- pick yours below to get started 👇", from_phone,
         ))
     return messages
 
 
 async def _send_industry_picker(session, sender: WhatsAppSender, sentinel_restaurant: Restaurant, customer_id, from_phone: str) -> None:
-    banner_messages = _welcome_banner_messages(sentinel_restaurant, from_phone)
+    banner_messages = await _welcome_banner_messages(session, sender, sentinel_restaurant, from_phone)
     templates = await _active_niche_templates(session, sentinel_restaurant)
     if not templates:
         await send_generic_messages_batch(
@@ -162,6 +190,46 @@ async def _send_industry_picker(session, sender: WhatsAppSender, sentinel_restau
     await send_generic_messages_batch(
         session, sender, sentinel_restaurant, customer_id, from_phone,
         [*banner_messages, OutboundMessage.text(from_phone, body)],
+    )
+
+
+async def _customer_is_at_a_terminal_step(session, demo_restaurant: Restaurant, from_phone: str) -> bool:
+    """True once this customer's conversation with this niche has reached a step marked
+    `terminal: True` (order placed / enquiry submitted / booking confirmed / etc, per
+    each niche's own default_flow_steps -- see generic_flow_engine.py's _render_step,
+    which fires FLOW_COMPLETED at exactly this same condition). A read-only peek (never
+    the row-locked fetch process_inbound_message itself uses), since this only decides
+    whether to show the demo-only "what next?" offer BEFORE delegating into the real
+    engine for this turn -- never mutates anything.
+    """
+    customer = await CustomerRepository(session).get_or_create(demo_restaurant.id, from_phone)
+    state = await GenericConversationStateRepository(session).get_by_customer(customer.id, demo_restaurant.id)
+    if state is None:
+        return False
+    flow_def = await FlowDefinitionRepository(session).get_by_restaurant(demo_restaurant.id)
+    if flow_def is None:
+        return False
+    step = next((s for s in flow_def.steps if s.get("step_id") == state.current_step), None)
+    return bool(step and step.get("terminal"))
+
+
+async def _send_terminal_step_offer(session, sender: WhatsAppSender, sentinel_restaurant: Restaurant, display_name: str, customer_id, from_phone: str) -> None:
+    """The explicit-choice replacement for what used to happen silently once a niche's
+    conversation finished: any further text quietly reset straight back into that SAME
+    niche's own welcome (generic_flow_engine.py's terminal-message-step fallback), with
+    no way back to the cross-niche picker short of a word ("menu") that collided with
+    real niche vocabulary and got removed. Two unambiguous BUTTONS instead of any
+    free-text keyword -- see _CONTINUE_REPLY_ID/_MENU_REPLY_ID's own handling in
+    handle_demo_inbound.
+    """
+    body = f"You're all set with *{display_name}* for now! What would you like to do next?"
+    buttons = [
+        {"id": _CONTINUE_REPLY_ID, "title": "🔄 Continue Browsing"},
+        {"id": _MENU_REPLY_ID, "title": "🌐 Try Another Industry"},
+    ]
+    await send_generic_message(
+        session, sender, sentinel_restaurant, customer_id, from_phone,
+        OutboundMessage.interactive_buttons(from_phone, body, buttons),
     )
 
 
@@ -248,7 +316,7 @@ async def handle_demo_inbound(
                 session, sender, sentinel_restaurant, sentinel_customer.id, from_phone,
                 OutboundMessage.text(
                     from_phone,
-                    f"🌐 Welcome to *{display_name}*! Type *menu* anytime to explore another industry.",
+                    f"🌐 Welcome to *{display_name}*! Type *industries* anytime to explore another industry.",
                 ),
             )
             await session.commit()
@@ -282,7 +350,40 @@ async def handle_demo_inbound(
         await session.commit()
         return
 
-    # Already mid-demo, not a leave signal -- delegate straight into the real engine,
-    # completely unmodified. It does its own inbound Message logging (scoped to this
-    # niche's own demo restaurant/customer) and its own wa_message_id dedup check.
+    if reply_id == _CONTINUE_REPLY_ID:
+        # Tapped from the terminal-step offer below -- restarts this SAME niche from its
+        # welcome step, same synthesized-"hi" pattern the initial pick uses. Logged under
+        # the sentinel scope (matching every other demo-control-button branch above),
+        # never delegated into the real engine as a raw "demo:continue" reply_id (no step
+        # anywhere would recognize it as a valid option).
+        sentinel_customer = await CustomerRepository(session).get_or_create(sentinel_restaurant.id, from_phone)
+        await _log_inbound(session, sentinel_restaurant, sentinel_customer.id, from_phone, interaction, wa_message_id)
+        await session.commit()
+        await process_inbound_message(
+            session, sender, demo_restaurant, from_phone, GenericInteraction(kind="text", text="hi"), wa_message_id=None
+        )
+        return
+
+    if await _customer_is_at_a_terminal_step(session, demo_restaurant, from_phone):
+        # This niche's conversation already finished (order placed / enquiry submitted /
+        # etc) -- explicitly ASK what's next instead of silently falling through to the
+        # real engine's own "any message after a terminal step resets to welcome"
+        # fallback, which used to make this whole turn invisible: the customer would type
+        # something, expecting a reply about what they just typed, and just see the same
+        # niche's welcome again with no explanation. This turn's actual inbound message
+        # (whatever it was) is intentionally NOT delegated into the real engine -- it's
+        # consumed by this offer instead, exactly the same way a leave-signal/pick
+        # consumes its own turn above.
+        sentinel_customer = await CustomerRepository(session).get_or_create(sentinel_restaurant.id, from_phone)
+        await _log_inbound(session, sentinel_restaurant, sentinel_customer.id, from_phone, interaction, wa_message_id)
+        niche_template = await NicheTemplateRepository(session).get_by_code(demo_restaurant.niche_type or "")
+        display_name = niche_template.name if niche_template else demo_restaurant.name
+        await _send_terminal_step_offer(session, sender, sentinel_restaurant, display_name, sentinel_customer.id, from_phone)
+        await session.commit()
+        return
+
+    # Already mid-demo, not a leave signal, not at a terminal step -- delegate straight
+    # into the real engine, completely unmodified. It does its own inbound Message
+    # logging (scoped to this niche's own demo restaurant/customer) and its own
+    # wa_message_id dedup check.
     await process_inbound_message(session, sender, demo_restaurant, from_phone, interaction, wa_message_id)

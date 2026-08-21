@@ -59,7 +59,7 @@ TEMPLATE = {
     "name": "Real Estate",
     "action_type": "inquiry",
     "icon": "\U0001f3e0",  # 🏠
-    "welcome_message": "\U0001f3e0 Welcome to [Business Name]! Find your perfect property today.",
+    "welcome_message": "\U0001f3e0 *Welcome to [Business Name]!*\nFind your perfect property today.",
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:browse", "title": "\U0001f3e0 Browse Properties"},
@@ -168,7 +168,7 @@ TEMPLATE = {
         {
             "step_id": "welcome",
             "type": "menu_select",
-            "prompt": "\U0001f3e0 Welcome to {{restaurant_name}}! Find your perfect property today.",
+            "prompt": "\U0001f3e0 *Welcome to {{restaurant_name}}!*\nFind your perfect property today.",
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:browse", "title": "\U0001f3e0 Browse Properties"},
@@ -193,7 +193,7 @@ TEMPLATE = {
         {
             "step_id": "human_handoff",
             "type": "human_handoff",
-            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "message": "\U0001f9d1 Connecting you with our team at *{{business_name}}* -- someone will reply here shortly.",
             "back_target": "welcome",
         },
         {
@@ -203,7 +203,8 @@ TEMPLATE = {
             "step_id": "list_property_capture",
             "type": "free_text_input",
             "prompt": (
-                "\U0001f4cb Want to list your property with {{business_name}}? Tell us a bit about it "
+                "\U0001f4cb *List Your Property*\n\n"
+                "Want to list with *{{business_name}}*? Tell us a bit about it "
                 "(location, type, asking price) -- or tap Skip and our team will call you instead."
             ),
             "capture_key": "property_listing_details",
@@ -215,8 +216,8 @@ TEMPLATE = {
             "step_id": "list_property_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your listing request:\n\n"
-                "\U0001f4cb {{property_listing_details}}\n\n"
+                "\U0001f4cb *Review Your Listing*\n\n"
+                "{{property_listing_details}}\n\n"
                 "Tap below and our team will get in touch to list it for you."
             ),
             "buttons_from": "static",
@@ -230,7 +231,7 @@ TEMPLATE = {
             "step_id": "list_property_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Thanks! Your listing request has been submitted. Reference: {{last_reference_number}}.\n\n"
+                "✅ *Thanks!* Your listing request has been submitted.\nReference: {{last_reference_number}}\n\n"
                 "Our team will reach out shortly to help list your property."
             ),
             "back_target": None,
@@ -239,26 +240,26 @@ TEMPLATE = {
         {
             "step_id": "offers_info",
             "type": "message",
-            "prompt": "\U0001f389 Ask our team about current offers and festive deals on select properties any time!",
+            "prompt": "\U0001f389 *Current Offers*\n\nAsk our team about current offers and festive deals on select properties any time!",
             "back_target": "welcome",
         },
         {
             "step_id": "location_info",
             "type": "message",
-            "prompt": "\U0001f4cd You'll find {{restaurant_name}}'s office details and directions here -- message us if you need help finding us!",
+            "prompt": "\U0001f4cd *{{restaurant_name}}*\n\nYou'll find our office details and directions here -- message us if you need help finding us!",
             "back_target": "welcome",
         },
         {
             "step_id": "contact_info",
             "type": "message",
-            "prompt": "\U0001f4de You can reach {{restaurant_name}}'s sales team right here on WhatsApp any time.",
+            "prompt": "\U0001f4de *{{restaurant_name}}*\n\nYou can reach our sales team right here on WhatsApp any time.",
             "back_target": "welcome",
         },
         {
             # "Browse Properties" tapped -> Category list. [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
-            "prompt": "Which type of property are you looking for?",
+            "prompt": "\U0001f3e0 Which type of property are you looking for?",
             "buttons_from": "categories",
             "capture_key": "category_id",
             "back_target": "welcome",
@@ -271,7 +272,7 @@ TEMPLATE = {
             # [Back -> Category list]
             "step_id": "item_select",
             "type": "menu_select",
-            "prompt": "Here are our {{category_id_label}} listings -- tap one to view details:",
+            "prompt": "Here are our *{{category_id_label}}* listings -- tap one to view details:",
             "buttons_from": "items",
             "category_context_key": "category_id",
             "capture_key": "item_id",
@@ -285,7 +286,7 @@ TEMPLATE = {
             # Optional budget note. [Back -> Listing list]
             "step_id": "budget_capture",
             "type": "free_text_input",
-            "prompt": "What's your budget range for *{{item_id_label}}*? (or tap Skip)",
+            "prompt": "\U0001f4b0 What's your budget range for *{{item_id_label}}*? (or tap Skip)",
             "capture_key": "budget_range",
             "allow_skip": True,
             "back_target": "item_select",
@@ -295,7 +296,7 @@ TEMPLATE = {
             # Optional free-form requirements. [Back -> budget note]
             "step_id": "requirements_capture",
             "type": "free_text_input",
-            "prompt": "Any specific requirements we should know (floor preference, parking, move-in date)? (or tap Skip)",
+            "prompt": "\U0001f4dd Any specific requirements we should know (floor preference, parking, move-in date)? (or tap Skip)",
             "capture_key": "requirements",
             "allow_skip": True,
             "back_target": "budget_capture",
@@ -306,7 +307,7 @@ TEMPLATE = {
             # button. [Back -> requirements note]
             "step_id": "name_confirm",
             "type": "menu_select",
-            "prompt": "Please confirm the name we should use for this inquiry: *{{customer_name}}*",
+            "prompt": "\U0001f9d1 Please confirm the name we should use for this inquiry:\n\n*{{customer_name}}*",
             "buttons_from": "static",
             "static_options": [
                 {"id": "name:confirm", "title": "Looks Good"},
@@ -334,10 +335,10 @@ TEMPLATE = {
             "step_id": "inquiry_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your inquiry:\n\n"
-                "\U0001f3e0 Property: {{item_id_label}}\n"
-                "\U0001f4b0 Budget: {{budget_range}}\n"
-                "\U0001f4dd Requirements: {{requirements}}\n\n"
+                "\U0001f3e0 *Review Your Inquiry*\n\n"
+                "\U0001f3e0 *Property:* {{item_id_label}}\n"
+                "\U0001f4b0 *Budget:* {{budget_range}}\n"
+                "\U0001f4dd *Requirements:* {{requirements}}\n\n"
                 "Tap below to submit."
             ),
             "buttons_from": "static",
@@ -355,8 +356,8 @@ TEMPLATE = {
             "step_id": "inquiry_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Thank you! Your inquiry has been submitted. Reference: {{last_reference_number}}.\n\n"
-                "Our agent will reach out to you shortly regarding {{item_id_label}}."
+                "✅ *Thank you!* Your inquiry has been submitted.\nReference: {{last_reference_number}}\n\n"
+                "Our agent will reach out to you shortly regarding *{{item_id_label}}*."
             ),
             "back_target": None,
             "terminal": True,

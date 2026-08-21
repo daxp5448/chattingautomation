@@ -54,7 +54,7 @@ TEMPLATE = {
     "name": "Clinic & Healthcare",
     "action_type": "appointment",
     "icon": "\U0001f3e5",  # 🏥
-    "welcome_message": "\U0001f3e5 Welcome to [Business Name]! Book your appointment in seconds.",
+    "welcome_message": "\U0001fa7a *Welcome to [Business Name]!*\n\nBook your appointment in seconds.",
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:book", "title": "\U0001f4c5 Book Appointment"},
@@ -185,7 +185,7 @@ TEMPLATE = {
         {
             "step_id": "welcome",
             "type": "menu_select",
-            "prompt": "\U0001f3e5 Welcome to {{restaurant_name}}! Book your appointment in seconds.",
+            "prompt": "\U0001fa7a *Welcome to {{restaurant_name}}!*\n\nBook your appointment in seconds.",
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:book", "title": "\U0001f4c5 Book Appointment"},
@@ -208,32 +208,32 @@ TEMPLATE = {
         {
             "step_id": "human_handoff",
             "type": "human_handoff",
-            "message": "\U0001f9d1 Connecting you with our team at {{business_name}} -- someone will reply here shortly.",
+            "message": "\U0001f9d1 *Connecting you now*\n\nSomeone from our team at {{business_name}} will reply here shortly.",
             "back_target": "welcome",
         },
         {
             "step_id": "offers_info",
             "type": "message",
-            "prompt": "\U0001f381 Ask our front desk about current health-checkup offers and packages any time you book!",
+            "prompt": "\U0001f381 *Special Offers*\n\nAsk our front desk about current health-checkup offers and packages any time you book!",
             "back_target": "welcome",
         },
         {
             "step_id": "location_info",
             "type": "message",
-            "prompt": "\U0001f4cd You'll find {{restaurant_name}} details and directions here -- message us if you need help finding us!",
+            "prompt": "\U0001f4cd *Our Location*\n\nYou'll find {{restaurant_name}}'s address and directions here -- message us if you need help finding us!",
             "back_target": "welcome",
         },
         {
             "step_id": "contact_info",
             "type": "message",
-            "prompt": "\U0001f4de You can reach {{restaurant_name}}'s front desk right here on WhatsApp any time.",
+            "prompt": "\U0001f4de *Contact Us*\n\nYou can reach {{restaurant_name}}'s front desk right here on WhatsApp, any time.",
             "back_target": "welcome",
         },
         {
             # Spec step 2: "Book Appointment" tapped -> Category list. [Back -> Welcome]
             "step_id": "category_select",
             "type": "menu_select",
-            "prompt": "Which type of consultation would you like to book?",
+            "prompt": "\U0001fa7a *Consultation Types*\n\nWhich type of consultation would you like to book?",
             "buttons_from": "categories",
             "capture_key": "category_id",
             "back_target": "welcome",
@@ -246,7 +246,7 @@ TEMPLATE = {
             # tap = select). [Back -> Category list]
             "step_id": "service_select",
             "type": "menu_select",
-            "prompt": "Here are our {{category_id_label}} consultations -- tap one to select:",
+            "prompt": "\U0001fa7a *{{category_id_label}} Consultations*\n\nTap one to select:",
             "buttons_from": "items",
             "category_context_key": "category_id",
             "capture_key": "item_id",
@@ -261,7 +261,7 @@ TEMPLATE = {
             # [Back -> Consultation list]
             "step_id": "staff_select",
             "type": "menu_select",
-            "prompt": "Great choice -- *{{item_id_label}}*. Which doctor would you like to see?",
+            "prompt": "Great choice -- *{{item_id_label}}*\n\n\U0001fa7a Which doctor would you like to see?",
             "buttons_from": "staff",
             "capture_key": "staff_id",
             "back_target": "service_select",
@@ -274,7 +274,7 @@ TEMPLATE = {
             # [Back -> doctor selection]
             "step_id": "date_select",
             "type": "menu_select",
-            "prompt": "When would you like to come in?",
+            "prompt": "\U0001f4c5 *Pick a Date*\n\nWhen would you like to come in?",
             "buttons_from": "dates",
             "capture_key": "date",
             "back_target": "staff_select",
@@ -286,7 +286,7 @@ TEMPLATE = {
             # [Back -> date buttons]
             "step_id": "time_select",
             "type": "menu_select",
-            "prompt": "Available time slots for *{{date_label}}*:",
+            "prompt": "⏰ *Available Slots -- {{date_label}}*\n\nTap a time to book it:",
             "buttons_from": "time_slots",
             "capture_key": "time",
             "back_target": "date_select",
@@ -298,11 +298,11 @@ TEMPLATE = {
             # editable via a button. [Back -> time slot]
             "step_id": "name_confirm",
             "type": "menu_select",
-            "prompt": "Please confirm the name for this booking: *{{customer_name}}*",
+            "prompt": "\U0001f4cb Please confirm the name for this booking:\n\n*{{customer_name}}*",
             "buttons_from": "static",
             "static_options": [
-                {"id": "name:confirm", "title": "Looks Good"},
-                {"id": "name:edit", "title": "Edit Name"},
+                {"id": "name:confirm", "title": "✅ Looks Good"},
+                {"id": "name:edit", "title": "✏️ Edit Name"},
             ],
             "routes": {
                 "name:confirm": "booking_confirm",
@@ -315,7 +315,7 @@ TEMPLATE = {
         {
             "step_id": "name_edit",
             "type": "free_text_input",
-            "prompt": "Please type the name we should use for this booking:",
+            "prompt": "✏️ Please type the name we should use for this booking:",
             "capture_key": "customer_name_override",
             "allow_skip": False,
             "next": "booking_confirm",
@@ -327,15 +327,15 @@ TEMPLATE = {
             "step_id": "booking_confirm",
             "type": "confirm_action",
             "prompt": (
-                "Please review your appointment:\n\n"
-                "\U0001fa7a Consultation: {{item_id_label}}\n"
-                "\U0001f468‍⚕️ Doctor: {{staff_id_label}}\n"
-                "\U0001f4c5 Date: {{date_label}}\n"
-                "⏰ Time: {{time_label}}\n\n"
+                "\U0001f4cb *Review Your Appointment*\n\n"
+                "\U0001fa7a *Consultation:* {{item_id_label}}\n"
+                "\U0001f468‍⚕️ *Doctor:* {{staff_id_label}}\n"
+                "\U0001f4c5 *Date:* {{date_label}}\n"
+                "⏰ *Time:* {{time_label}}\n\n"
                 "Tap below to confirm."
             ),
             "buttons_from": "static",
-            "static_options": [{"id": "booking:confirm", "title": "Confirm Booking"}],
+            "static_options": [{"id": "booking:confirm", "title": "✅ Confirm Booking"}],
             "action": "create_engagement",
             "back_target": "name_confirm",
             "next": "booking_confirmed",
@@ -349,7 +349,8 @@ TEMPLATE = {
             "step_id": "booking_confirmed",
             "type": "message",
             "prompt": (
-                "✅ Your appointment is confirmed! Reference: {{last_reference_number}}.\n\n"
+                "✅ *Appointment Confirmed!*\n\n"
+                "Reference: {{last_reference_number}}\n\n"
                 "We'll send you a reminder before your appointment. See you soon at "
                 "{{restaurant_name}}!"
             ),

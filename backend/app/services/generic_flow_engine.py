@@ -80,6 +80,7 @@ from app.core.ws_manager import manager as ws_manager
 from app.models.customer import Customer
 from app.models.engagement import Engagement, EngagementItem
 from app.models.enums import EngagementStatus, EngagementType, MessageDirection, MessageSender
+from app.models.jewellery_design import JewelleryDesign
 from app.models.message import Message
 from app.models.restaurant import Restaurant
 from app.repositories.catalog_repository import CatalogCategoryRepository, CatalogItemRepository
@@ -89,6 +90,7 @@ from app.repositories.flow_definition_repository import FlowDefinitionRepository
 from app.services import analytics
 from app.repositories.generic_conversation_repository import GenericConversationStateRepository
 from app.repositories.jewellery_design_repository import JewelleryDesignRepository
+from app.repositories.meta_media_cache_repository import MetaMediaCacheRepository
 from app.repositories.staff_member_repository import StaffMemberRepository
 from app.services.image_presenter import (
     resolve_category_images,
@@ -97,9 +99,10 @@ from app.services.image_presenter import (
     resolve_item_images_bulk,
     resolve_step_images,
 )
+from app.services.meta_media_upload import MEDIA_ID_FRESHNESS_DAYS, schedule_background_upload
 from app.services.notification_service import notify_business
 from app.services.template_engine import render_template
-from app.services.whatsapp_client import OutboundMessage, WhatsAppSender
+from app.services.whatsapp_client import GraphAPIWhatsAppSender, OutboundMessage, WhatsAppSender
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +116,13 @@ SKIP_REPLY_ID = "__skip__"
 # id, so this is a no-op for them.
 JEWELLERY_LOAD_MORE_REPLY_ID = "__jewellery_more__"
 
-_GREETING_WORDS = {"hi", "hello", "hey", "hii", "hola", "start", "menu", "yo", "sup", "namaste"}
+# "menu" used to be in this set and was a real bug: a restaurant (or any niche's)
+# customer mid-conversation who typed "menu" wanting to see options/the food menu again
+# -- an entirely ordinary thing to type -- had their whole conversation silently reset to
+# welcome instead, discarding an in-progress cart/order/enquiry. Only words that are
+# essentially never a plausible mid-conversation utterance with some OTHER meaning stay
+# here.
+_GREETING_WORDS = {"hi", "hello", "hey", "hii", "hola", "start", "yo", "sup", "namaste"}
 _PLACEHOLDER_IMAGE = "https://placehold.co/600x400?text={label}"
 # Photo-burst ceiling (see _photo_burst_urls / _send_options): a category can override
 # via step["photo_burst_max"] (a plain flow-step field, already editable via Flow
@@ -806,7 +815,7 @@ class _Engine:
             messages = []
             if step.get("show_image", True):
                 for img in await self._step_gallery(restaurant, step):
-                    messages.append(OutboundMessage.image(from_phone, img.url, (img.caption or prompt)[:1024]))
+                    messages.append(await self._media_message(restaurant, img.url, (img.caption or prompt)[:1024], from_phone))
             messages.append(OutboundMessage.text(from_phone, prompt))
             await send_generic_messages_batch(self.session, self.sender, restaurant, customer.id, from_phone, messages)
             return
@@ -965,7 +974,7 @@ class _Engine:
             # images-before-options and be a redundant repeat of the same line.
             for option, url in zip(options, burst_urls):
                 caption = option["title"] + (f" - {option['description']}" if option.get("description") else "")
-                image_messages.append(OutboundMessage.image(from_phone, url, caption[:1024]))
+                image_messages.append(await self._media_message(restaurant, url, caption[:1024], from_phone))
         elif show_images and step.get("item_context_key"):
             # An "item detail" step (e.g. "Ring Details") keyed on a previously-selected
             # item -- every active image Super Admin has curated for that item, each with
@@ -976,17 +985,17 @@ class _Engine:
             gallery = await self._item_gallery(restaurant, context.get(step["item_context_key"]))
             if gallery:
                 for img in gallery:
-                    image_messages.append(OutboundMessage.image(from_phone, img.url, (img.caption or body)[:1024]))
+                    image_messages.append(await self._media_message(restaurant, img.url, (img.caption or body)[:1024], from_phone))
             else:
                 image_url = await self._image_for_step(restaurant, step, context)
                 if image_url:
-                    image_messages.append(OutboundMessage.image(from_phone, image_url, body[:1024]))
+                    image_messages.append(await self._media_message(restaurant, image_url, body[:1024], from_phone))
         elif show_images and (step_gallery := await self._step_gallery(restaurant, step)):
             # Curated per-step images (e.g. a dedicated gallery step, or a welcome step
             # with more than one banner) -- same mechanism as _item_gallery above, just
             # sourced from the step itself rather than a selected catalog item.
             for img in step_gallery:
-                image_messages.append(OutboundMessage.image(from_phone, img.url, (img.caption or body)[:1024]))
+                image_messages.append(await self._media_message(restaurant, img.url, (img.caption or body)[:1024], from_phone))
         elif show_images:
             image_url = await self._image_for_step(restaurant, step, context)
             if image_url:
@@ -999,7 +1008,7 @@ class _Engine:
                         f"• {o['title']}" + (f" - {o['description']}" if o.get("description") else "")
                         for o in options[:10]
                     ]
-                image_messages.append(OutboundMessage.image(from_phone, image_url, "\n".join(caption_lines)[:1024]))
+                image_messages.append(await self._media_message(restaurant, image_url, "\n".join(caption_lines)[:1024], from_phone))
 
         # Meta caps interactive-button messages at 3 total buttons; use a list (cap 10)
         # whenever that would be exceeded, so Back always has room instead of getting
@@ -1090,7 +1099,7 @@ class _Engine:
         messages: list[OutboundMessage] = []
         for design in designs:
             caption = f"{design.name}\n{material_label} • {category_label}"
-            messages.append(OutboundMessage.image(from_phone, f"{settings.PUBLIC_MEDIA_BASE_URL}/{design.image_key}", caption[:1024]))
+            messages.append(await self._design_image_message(restaurant, design, caption[:1024], from_phone))
 
         shown_so_far = page * page_size + len(designs)
         has_more = shown_so_far < total
@@ -1104,6 +1113,100 @@ class _Engine:
         messages.append(OutboundMessage.interactive_buttons(from_phone, body, buttons))
 
         await send_generic_messages_batch(self.session, self.sender, restaurant, customer.id, from_phone, messages)
+
+    async def _media_message(self, restaurant: Restaurant, url: str, caption: str, from_phone: str) -> OutboundMessage:
+        """The generic-image counterpart of _design_image_message below -- same
+        pre-uploaded-media_id-with-link-fallback behavior, for any catalog item/category/
+        flow-step image (from image_presenter.py's ItemImage.url, or a restaurant's
+        cover_image_url/logo_url welcome banner) rather than a JewelleryDesign row
+        specifically. Cached generically by (phone_number_id, url) in MetaMediaCache
+        (see that model's docstring for why a separate table, not more columns bolted
+        onto `Image` -- ItemImage only ever exposes a url string, not the owning Image
+        row, and the legacy CatalogItem.images plain-URL fallback has no row at all).
+        Every caller keeps working exactly as before on any failure/miss -- this never
+        raises, and dry_run (Bot Preview) never makes a real Meta API call.
+
+        On a cache miss, the CURRENT send always goes out via `link` immediately -- the
+        upload is scheduled as a fire-and-forget background task (see
+        meta_media_upload.py::schedule_background_upload) that only pre-warms the cache
+        for next time, never adding upload latency to the reply the customer is actually
+        waiting on right now.
+        """
+        if self.dry_run:
+            return OutboundMessage.image(from_phone, url, caption)
+
+        send_via = restaurant
+        if restaurant.demo_sends_via_restaurant_id:
+            send_via = await self.session.get(Restaurant, restaurant.demo_sends_via_restaurant_id)
+        phone_number_id = send_via.whatsapp_phone_number_id or ""
+        if not phone_number_id:
+            return OutboundMessage.image(from_phone, url, caption)
+
+        cache_repo = MetaMediaCacheRepository(self.session)
+        cached = await cache_repo.get(phone_number_id, url)
+        fresh_cutoff = datetime.utcnow() - timedelta(days=MEDIA_ID_FRESHNESS_DAYS)
+        if cached and cached.uploaded_at > fresh_cutoff:
+            return OutboundMessage.image_by_id(from_phone, cached.media_id, caption)
+
+        if isinstance(self.sender, GraphAPIWhatsAppSender):
+            access_token = decrypt_secret(send_via.whatsapp_access_token_encrypted or "")
+            restaurant_id = restaurant.id
+
+            async def _persist(session, media_id: str) -> None:
+                await MetaMediaCacheRepository(session).upsert(restaurant_id, phone_number_id, url, media_id, datetime.utcnow())
+
+            schedule_background_upload(self.sender._client, phone_number_id, access_token, url, _persist)
+
+        return OutboundMessage.image(from_phone, url, caption)
+
+    async def _design_image_message(self, restaurant: Restaurant, design, caption: str, from_phone: str) -> OutboundMessage:
+        """A design's image, sent by pre-uploaded Meta media_id when a fresh one is
+        cached for the phone_number_id this restaurant actually sends through, falling
+        back to the plain `link` form (which already works correctly today) in every
+        other case: dry_run (Bot Preview never makes real Meta API calls), no cached id
+        yet, a cached id for a DIFFERENT phone_number_id (e.g. this design was last shown
+        via a different demo routing), a stale one past MEDIA_ID_FRESHNESS_DAYS, or the
+        lazy upload attempt itself failing for any reason. A design's meta_media_id is
+        only ever set here, lazily, on first use that needs it -- never eagerly for the
+        whole catalogue at once.
+        """
+        link = f"{settings.PUBLIC_MEDIA_BASE_URL}/{design.image_key}"
+        if self.dry_run:
+            return OutboundMessage.image(from_phone, link, caption)
+
+        send_via = restaurant
+        if restaurant.demo_sends_via_restaurant_id:
+            send_via = await self.session.get(Restaurant, restaurant.demo_sends_via_restaurant_id)
+        phone_number_id = send_via.whatsapp_phone_number_id or ""
+
+        fresh_cutoff = datetime.utcnow() - timedelta(days=MEDIA_ID_FRESHNESS_DAYS)
+        has_fresh_id = (
+            design.meta_media_id
+            and design.meta_media_id_phone_number_id == phone_number_id
+            and design.meta_media_id_uploaded_at
+            and design.meta_media_id_uploaded_at > fresh_cutoff
+        )
+        if has_fresh_id:
+            return OutboundMessage.image_by_id(from_phone, design.meta_media_id, caption)
+
+        if isinstance(self.sender, GraphAPIWhatsAppSender) and phone_number_id:
+            access_token = decrypt_secret(send_via.whatsapp_access_token_encrypted or "")
+            design_id = design.id
+
+            async def _persist(session, media_id: str) -> None:
+                # Re-fetched by id in this fresh (background-task-owned) session -- the
+                # `design` row from the request's own session is out of scope by the time
+                # this runs, since the request already returned its `link`-based reply
+                # before this task's upload even starts.
+                fresh_design = await session.get(JewelleryDesign, design_id)
+                if fresh_design is not None:
+                    fresh_design.meta_media_id = media_id
+                    fresh_design.meta_media_id_phone_number_id = phone_number_id
+                    fresh_design.meta_media_id_uploaded_at = datetime.utcnow()
+
+            schedule_background_upload(self.sender._client, phone_number_id, access_token, design.image_key, _persist)
+
+        return OutboundMessage.image(from_phone, link, caption)
 
     async def _render_jewellery_gallery_native(self, restaurant, customer, state, from_phone, step, show_back) -> bool:
         """Native "Multi-Product Message" branch of _render_jewellery_gallery -- a real

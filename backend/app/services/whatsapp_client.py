@@ -202,6 +202,25 @@ class OutboundMessage:
         )
 
     @classmethod
+    def image_by_id(cls, to: str, media_id: str, caption: str = "") -> "OutboundMessage":
+        """Same message type as `image()` above, but referencing media already uploaded
+        to Meta (see app/services/meta_media_upload.py) instead of a link Meta must fetch
+        itself -- near-instant delivery for a frequently-resent static image, at the cost
+        of the media_id needing periodic re-upload (Meta's ids don't last forever). Never
+        the only path to send an image anywhere in this codebase -- every caller falls
+        back to the plain `link` form above when no fresh id is cached.
+        """
+        return cls(
+            to,
+            {
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "image",
+                "image": {"id": media_id, "caption": caption[:1024]},
+            },
+        )
+
+    @classmethod
     def product_list(
         cls,
         to: str,
