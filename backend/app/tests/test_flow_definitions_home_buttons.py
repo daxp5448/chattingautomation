@@ -99,9 +99,10 @@ async def test_full_home_buttons_read_and_update_round_trip(db_session, client):
     initial = await client.get(f"/api/v1/restaurants/{restaurant.id}/flow/home-buttons", headers=headers)
     assert initial.status_code == 200
     initial_buttons = initial.json()["buttons"]
-    assert len(initial_buttons) == 6  # restaurant.py's welcome step has 6 static_options
+    assert len(initial_buttons) == 7  # restaurant.py's welcome step has 7 static_options
     assert {b["id"] for b in initial_buttons} == {
-        "welcome:order", "welcome:cart", "welcome:offers", "welcome:location", "welcome:contact", "welcome:human",
+        "welcome:order", "welcome:quick_order", "welcome:cart", "welcome:offers",
+        "welcome:location", "welcome:contact", "welcome:human",
     }
     # Every existing button's destination resolved correctly (via routes or next fallback).
     by_id = {b["id"]: b for b in initial_buttons}
@@ -268,7 +269,7 @@ async def test_get_and_update_buttons_on_a_non_entry_step(db_session, client):
     # Every other step in the flow is untouched.
     full_flow = await client.get(f"/api/v1/restaurants/{restaurant.id}/flow", headers=headers)
     welcome_step = next(s for s in full_flow.json()["steps"] if s["step_id"] == "welcome")
-    assert len(welcome_step["static_options"]) == 6
+    assert len(welcome_step["static_options"]) == 7
 
 
 async def test_step_buttons_endpoint_404s_for_unknown_step(db_session, client):

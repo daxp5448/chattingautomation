@@ -71,6 +71,36 @@ async def test_create_list_get_draft_template(client, db_session):
     assert detail.json()["name"] == "order_confirmation"
 
 
+async def test_purpose_defaults_to_general_and_is_settable_and_updatable(client, db_session):
+    restaurant = await _make_restaurant(db_session, "purpose")
+    headers = await _register_and_login(client, restaurant.id)
+
+    # Omitted entirely -- defaults to "general", never a validation error.
+    default_resp = await client.post(
+        f"/api/v1/restaurants/{restaurant.id}/whatsapp-templates", json=_create_payload(name="no_purpose_set"), headers=headers
+    )
+    assert default_resp.status_code == 201, default_resp.text
+    assert default_resp.json()["purpose"] == "general"
+
+    # Explicit purpose at create time.
+    payload = _create_payload(name="jewellery_showcase_tpl")
+    payload["purpose"] = "product_showcase"
+    created = await client.post(f"/api/v1/restaurants/{restaurant.id}/whatsapp-templates", json=payload, headers=headers)
+    assert created.status_code == 201, created.text
+    assert created.json()["purpose"] == "product_showcase"
+    template_id = created.json()["id"]
+
+    # Updatable while still DRAFT.
+    updated = await client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/whatsapp-templates/{template_id}", json={"purpose": "enquiry"}, headers=headers
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["purpose"] == "enquiry"
+
+    fetched = await client.get(f"/api/v1/restaurants/{restaurant.id}/whatsapp-templates/{template_id}", headers=headers)
+    assert fetched.json()["purpose"] == "enquiry"
+
+
 async def test_create_rejects_malformed_name(client, db_session):
     restaurant = await _make_restaurant(db_session, "badname")
     headers = await _register_and_login(client, restaurant.id)

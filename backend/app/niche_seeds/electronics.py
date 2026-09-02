@@ -323,4 +323,11 @@ TEMPLATE = {
         "item_label": "Product",
     },
     "default_modules": {},
+    "default_personality": {
+        "tone": "knowledgeable_practical",
+        "language": "auto",
+        "emoji_level": "low",
+        "response_length": "short",
+        "business_personality": "electronics",
+    },
 }

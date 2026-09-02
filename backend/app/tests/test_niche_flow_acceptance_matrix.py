@@ -180,3 +180,18 @@ def test_every_non_welcome_step_has_a_back_target():
             if step["type"] == "human_handoff" or step.get("terminal"):
                 continue  # no back navigation offered after handoff or a flow's final step
             assert step.get("back_target"), f"{template['code']}/{step['step_id']}: no back_target set"
+
+
+_REQUIRED_PERSONALITY_KEYS = ("tone", "language", "emoji_level", "response_length", "business_personality")
+
+
+def test_every_niche_has_a_complete_default_personality():
+    """'No niche left with a hole' applied to conversational tone (see
+    app/models/niche_template.py's default_personality docstring and
+    conversational_style.py's humanize()) -- same idiom as
+    test_every_category_and_item_has_image_coverage above, just for personality instead
+    of images."""
+    for template in _iter_niches():
+        personality = template.get("default_personality") or {}
+        for key in _REQUIRED_PERSONALITY_KEYS:
+            assert personality.get(key), f"{template['code']}: default_personality.{key} is missing/empty"

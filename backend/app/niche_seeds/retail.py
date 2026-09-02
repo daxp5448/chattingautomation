@@ -323,4 +323,11 @@ TEMPLATE = {
         "item_label": "Item",
     },
     "default_modules": {},
+    "default_personality": {
+        "tone": "friendly_style_focused",
+        "language": "auto",
+        "emoji_level": "high",
+        "response_length": "short",
+        "business_personality": "retail_fashion",
+    },
 }

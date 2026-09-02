@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth";
 import { useCurrentRestaurant } from "@/lib/restaurant";
 import type { AuditLogEntry, Branch, DisplayDevice, DisplayDeviceCreateResult, FeaturePackage, NicheTemplateSummary, Restaurant, RestaurantCreateResult } from "@/lib/types";
 import { IconKey, IconDownload, IconGlobe, IconAlertTriangle, IconMonitor, IconSettings } from "@/components/icons";
+import { TemplateImageUpload } from "@/components/TemplateImageUpload";
 
 // Sentinel value for the Business type <select> -- distinct from "" (the unselectable
 // placeholder) so a Super Admin has to deliberately pick THIS to get the legacy engine,
@@ -568,11 +569,18 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
   const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState(restaurant.whatsapp_phone_number_id || "");
   const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState(restaurant.whatsapp_business_account_id || "");
   const [whatsappCatalogId, setWhatsappCatalogId] = useState(restaurant.whatsapp_catalog_id || "");
+  const [quickCustomizeFlowId, setQuickCustomizeFlowId] = useState(restaurant.whatsapp_quick_customize_flow_id || "");
+  const [quickCustomizeFlowDraftMode, setQuickCustomizeFlowDraftMode] = useState(restaurant.whatsapp_quick_customize_flow_draft_mode);
   const [whatsappAccessToken, setWhatsappAccessToken] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState(restaurant.cover_image_url || "");
   const [logoUrl, setLogoUrl] = useState(restaurant.logo_url || "");
   const [pointsPerCurrency, setPointsPerCurrency] = useState(String(restaurant.loyalty_settings.points_per_currency_unit ?? 0));
   const [redemptionValue, setRedemptionValue] = useState(String(restaurant.loyalty_settings.redemption_value_per_point ?? 0));
+  const [tone, setTone] = useState(restaurant.conversation_settings?.tone || "");
+  const [language, setLanguage] = useState(restaurant.conversation_settings?.language || "auto");
+  const [emojiLevel, setEmojiLevel] = useState(restaurant.conversation_settings?.emoji_level || "high");
+  const [responseLength, setResponseLength] = useState(restaurant.conversation_settings?.response_length || "normal");
+  const [businessPersonality, setBusinessPersonality] = useState(restaurant.conversation_settings?.business_personality || "");
   const [featurePackageId, setFeaturePackageId] = useState(restaurant.feature_package_id || "");
   const [featurePackages, setFeaturePackages] = useState<FeaturePackage[]>([]);
   const [saving, setSaving] = useState(false);
@@ -601,11 +609,20 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
         whatsapp_phone_number_id: whatsappPhoneNumberId || null,
         whatsapp_business_account_id: whatsappBusinessAccountId || null,
         whatsapp_catalog_id: whatsappCatalogId || null,
+        whatsapp_quick_customize_flow_id: quickCustomizeFlowId || null,
+        whatsapp_quick_customize_flow_draft_mode: quickCustomizeFlowDraftMode,
         cover_image_url: coverImageUrl || null,
         logo_url: logoUrl || null,
         loyalty_settings: {
           points_per_currency_unit: Number(pointsPerCurrency) || 0,
           redemption_value_per_point: Number(redemptionValue) || 0,
+        },
+        conversation_settings: {
+          tone: tone || undefined,
+          language: language,
+          emoji_level: emojiLevel,
+          response_length: responseLength,
+          business_personality: businessPersonality || undefined,
         },
         feature_package_id: featurePackageId || null,
       };
@@ -658,33 +675,23 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
       <div>
         <p className="mb-1 text-xs font-medium text-slate-500">Branding</p>
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-slate-500">Cover image URL</label>
-            <input
-              value={coverImageUrl}
-              onChange={(e) => setCoverImageUrl(e.target.value)}
-              placeholder="https://..."
-              autoComplete="off"
-              data-1p-ignore
-              className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500">Logo URL</label>
-            <input
-              value={logoUrl}
-              onChange={(e) => setLogoUrl(e.target.value)}
-              placeholder="https://..."
-              autoComplete="off"
-              data-1p-ignore
-              className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            />
-          </div>
+          <TemplateImageUpload
+            label="Cover image"
+            value={coverImageUrl}
+            onChange={setCoverImageUrl}
+            endpoint={`/restaurants/${restaurant.id}/upload-image`}
+          />
+          <TemplateImageUpload
+            label="Logo"
+            value={logoUrl}
+            onChange={setLogoUrl}
+            endpoint={`/restaurants/${restaurant.id}/upload-image`}
+          />
         </div>
-        {coverImageUrl && <img src={coverImageUrl} alt="Cover preview" className="mt-2 h-24 w-full rounded-md object-cover" />}
         <p className="mt-1 text-xs text-slate-400">
-          Must be a real, publicly reachable HTTPS image URL — Meta fetches it directly. If set, this is sent as a
-          photo right before the WhatsApp welcome menu.
+          Upload a file (converted to a permanent public URL automatically), or paste one directly. Meta fetches this
+          URL directly, so it must stay publicly reachable — uploaded images already satisfy that. If set, the cover
+          image is sent as a photo right before the WhatsApp welcome menu.
         </p>
       </div>
 
@@ -763,6 +770,27 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
             image-based carousel automatically.
           </p>
         </div>
+        <div className="mt-3">
+          <label className="block text-xs font-medium text-slate-500">Quick Customize Flow ID (optional)</label>
+          <input
+            value={quickCustomizeFlowId}
+            onChange={(e) => setQuickCustomizeFlowId(e.target.value)}
+            placeholder="e.g. 1504663505025579"
+            autoComplete="off"
+            data-1p-ignore
+            className="w-full max-w-sm rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
+          <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+            <input type="checkbox" checked={quickCustomizeFlowDraftMode} onChange={(e) => setQuickCustomizeFlowDraftMode(e.target.checked)} />
+            Flow is still in Draft status in Meta&apos;s Flow Builder
+          </label>
+          <p className="mt-1 text-xs text-slate-400">
+            The id of a Flow built manually in Meta&apos;s own Flow Builder (single static screen, no endpoint) --
+            distinct from the auto-created ordering Flow above. While in Draft status, Meta only delivers it to
+            phone numbers registered as test numbers for this WhatsApp app; check the box above until it&apos;s
+            published, or real customers won&apos;t receive it.
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
@@ -788,6 +816,57 @@ function SettingsPanel({ restaurant, onSaved }: { restaurant: Restaurant; onSave
         <div>
           <label className="block text-xs font-medium text-slate-500">Redemption value per point</label>
           <input type="number" step="0.01" value={redemptionValue} onChange={(e) => setRedemptionValue(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1 text-xs font-medium text-slate-500">Conversation Style</p>
+        <p className="mb-2 text-xs text-slate-400">
+          How the WhatsApp bot phrases its replies -- rule-based only (no AI/LLM), read by the flow engine on every
+          message. Leave blank to use this niche&apos;s own default.
+        </p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-500">Tone</label>
+            <input
+              value={tone}
+              onChange={(e) => setTone(e.target.value)}
+              placeholder="e.g. friendly_casual"
+              className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500">Language</label>
+            <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm">
+              <option value="auto">Auto</option>
+              <option value="en">English</option>
+              <option value="hinglish">Hinglish</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500">Emoji level</label>
+            <select value={emojiLevel} onChange={(e) => setEmojiLevel(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm">
+              <option value="none">None</option>
+              <option value="low">Low</option>
+              <option value="high">High (as authored)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500">Response length</label>
+            <select value={responseLength} onChange={(e) => setResponseLength(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm">
+              <option value="normal">Normal</option>
+              <option value="short">Short</option>
+            </select>
+          </div>
+        </div>
+        <div className="mt-3">
+          <label className="block text-xs font-medium text-slate-500">Business personality (display label)</label>
+          <input
+            value={businessPersonality}
+            onChange={(e) => setBusinessPersonality(e.target.value)}
+            placeholder="e.g. premium jeweller"
+            className="w-full max-w-xs rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
         </div>
       </div>
 

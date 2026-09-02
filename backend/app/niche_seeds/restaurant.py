@@ -51,6 +51,7 @@ TEMPLATE = {
     "welcome_banner_image": _IMG_WELCOME,
     "welcome_buttons": [
         {"id": "welcome:order", "title": "\U0001f6d2 Order Now"},
+        {"id": "welcome:quick_order", "title": "⚡ Quick Order"},
         {"id": "welcome:cart", "title": "\U0001f6d2 View Cart"},
         {"id": "welcome:offers", "title": "\U0001f381 Offers"},
         {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
@@ -156,6 +157,7 @@ TEMPLATE = {
             "buttons_from": "static",
             "static_options": [
                 {"id": "welcome:order", "title": "\U0001f6d2 Order Now"},
+                {"id": "welcome:quick_order", "title": "⚡ Quick Order"},
                 {"id": "welcome:cart", "title": "\U0001f6d2 View Cart"},
                 {"id": "welcome:offers", "title": "\U0001f381 Offers"},
                 {"id": "welcome:location", "title": "\U0001f4cd Our Location"},
@@ -164,6 +166,7 @@ TEMPLATE = {
             ],
             "routes": {
                 "welcome:order": "category_select",
+                "welcome:quick_order": "quick_order_flow",
                 "welcome:cart": "cart_menu",
                 "welcome:offers": "offers_info",
                 "welcome:location": "location_info",
@@ -204,6 +207,36 @@ TEMPLATE = {
             "type": "human_handoff",
             "message": "\U0001f9d1 Connecting you with our team at *{{business_name}}* -- someone will reply here shortly.",
             "back_target": "welcome",
+        },
+        {
+            # "Quick Order" tapped -> the WhatsApp Flow-based quick picker (option tier +
+            # quantity + notes on one screen). If this business hasn't configured a Flow
+            # yet (whatsapp_quick_customize_flow_id unset), falls through straight to the
+            # normal category browse instead of a dead end. [Back -> Welcome]
+            "step_id": "quick_order_flow",
+            "type": "send_quick_customize_flow",
+            "prompt": "⚡ *Quick Order*\n\nPick an option, quantity, and any notes below -- perfect for a fast repeat order.",
+            "cta": "Select & Submit",
+            "back_target": "welcome",
+            "next": "quick_order_confirmed",
+            "fallback_next": "category_select",
+        },
+        {
+            # Flow submitted -> acknowledgement. This path has no priced catalog item
+            # behind it (the Flow's own dropdown is fixed generic tiers, not real menu
+            # data -- see _QUICK_CUSTOMIZE_ITEM_LABELS), so it deliberately does not touch
+            # the cart/create_engagement pipeline; staff follow up on pricing directly.
+            # Terminal -- no Back.
+            "step_id": "quick_order_confirmed",
+            "type": "message",
+            "prompt": (
+                "✅ *Got it!*\n\n\U0001f381 {{quick_customize_item_label}} × {{quantity}}\n"
+                "\U0001f4dd Notes: {{note}}\n\n"
+                "Our team will confirm pricing & availability with you shortly. "
+                "Thank you for choosing *{{business_name}}*!"
+            ),
+            "back_target": None,
+            "terminal": True,
         },
         {
             # "Order Now" tapped -> Category list. [Back -> Welcome]
@@ -324,4 +357,11 @@ TEMPLATE = {
         "item_label": "Dish",
     },
     "default_modules": {},
+    "default_personality": {
+        "tone": "friendly_casual",
+        "language": "auto",
+        "emoji_level": "high",
+        "response_length": "short",
+        "business_personality": "restaurant",
+    },
 }

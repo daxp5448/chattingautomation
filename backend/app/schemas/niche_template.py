@@ -21,6 +21,7 @@ class NicheTemplateSummary(BaseModel):
     # page load just to read two small JSON fields -- see frontend/lib/restaurant.tsx.
     terminology: dict[str, Any]
     default_modules: dict[str, Any]
+    default_personality: dict[str, Any]
 
 
 class NicheCatalogItem(BaseModel):
@@ -59,6 +60,7 @@ class NicheTemplateBase(BaseModel):
     default_ui_layout: dict[str, Any] = {}
     terminology: dict[str, Any] = {}
     default_modules: dict[str, Any] = {}
+    default_personality: dict[str, Any] = {}
 
 
 class NicheTemplateCreate(NicheTemplateBase):
@@ -76,6 +78,7 @@ class NicheTemplateUpdate(BaseModel):
     default_ui_layout: dict[str, Any] | None = None
     terminology: dict[str, Any] | None = None
     default_modules: dict[str, Any] | None = None
+    default_personality: dict[str, Any] | None = None
 
 
 class NicheTemplateFullRead(NicheTemplateBase):

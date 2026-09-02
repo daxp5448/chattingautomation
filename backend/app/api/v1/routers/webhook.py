@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import logging
 import uuid
 
@@ -72,6 +73,21 @@ def _extract_generic_interaction(message: dict, profile_name: str | None) -> Gen
         if interactive_type == "button_reply":
             reply = interactive["button_reply"]
             return GenericInteraction(kind="button_reply", reply_id=reply.get("id"), text=reply.get("title"), profile_name=profile_name)
+        if interactive_type == "nfm_reply":
+            # A STATIC WhatsApp Flow's final submission (no endpoint/data-exchange
+            # configured -- see Restaurant.whatsapp_quick_customize_flow_id's docstring
+            # and generic_flow_engine.py's send_quick_customize_flow step type). Meta
+            # sends the Flow's own "on-click-action" payload as a JSON-encoded STRING,
+            # not a nested object -- must be parsed, and parsed defensively: a malformed
+            # or unexpected payload here must never 500 the whole webhook.
+            nfm_reply = interactive.get("nfm_reply", {})
+            raw = nfm_reply.get("response_json")
+            try:
+                response = json.loads(raw) if raw else {}
+            except (TypeError, ValueError):
+                logger.warning("Malformed nfm_reply response_json, treating as empty: %r", raw)
+                response = {}
+            return GenericInteraction(kind="flow_reply", flow_response=response, profile_name=profile_name)
     if msg_type == "location":
         loc = message.get("location", {})
         return GenericInteraction(
@@ -81,6 +97,12 @@ def _extract_generic_interaction(message: dict, profile_name: str | None) -> Gen
             longitude=loc.get("longitude"),
             profile_name=profile_name,
         )
+    if msg_type in ("image", "video", "audio", "document", "sticker", "order"):
+        # Previously fell through to the `return None` below and the webhook silently
+        # dropped the message -- a customer sending a photo/voice note/native-catalog
+        # cart got no reply at all. See generic_flow_engine.py's handle() for the
+        # acknowledgement this now gets (never advances/resets their conversation state).
+        return GenericInteraction(kind="unhandled_media", media_kind=msg_type, profile_name=profile_name)
     return None
 
 

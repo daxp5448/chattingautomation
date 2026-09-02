@@ -49,6 +49,14 @@ class NicheTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # EngagementStatus/generic model never changes per niche.
     terminology: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
+    # {"tone": "premium_elegant", "language": "hinglish", "emoji_level": "low",
+    #  "response_length": "short", "business_personality": "jeweller"} -- this niche's
+    # default conversational style, merged onto a newly-provisioned business's own
+    # Restaurant.conversation_settings (see niche_provisioning.py, same merge-never-
+    # clobber pattern as default_modules), then freely editable per-business afterward.
+    # Same JSON-dict shape as Restaurant.conversation_settings by design.
+    default_personality: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
     # {"staff_selection": true, "deposit_payment": false, ...} -- default module flags
     # copied onto the business at creation; independently toggleable after via the
     # business's own settings, same pattern as Restaurant.payment_methods today.

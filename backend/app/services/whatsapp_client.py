@@ -102,7 +102,7 @@ class OutboundMessage:
     @classmethod
     def flow(
         cls, to: str, body: str, flow_id: str, flow_token: str, cta: str,
-        screen: str, data: dict[str, Any] | None = None,
+        screen: str, data: dict[str, Any] | None = None, mode: str | None = None,
     ) -> "OutboundMessage":
         """Opens a native WhatsApp Flow (see app/services/whatsapp_flow_order_service.py
         and the approved "WhatsApp Flows for Ordering" plan) -- a multi-screen form inside
@@ -112,7 +112,26 @@ class OutboundMessage:
         means the very first screen doesn't need a data_exchange round-trip -- only
         screen 2 onward calls the data-exchange webhook (see webhook.py's
         receive_flow_data_exchange).
+
+        `mode="draft"` is Meta's own required parameter for delivering a Flow that's
+        still in DRAFT status in the Flow Builder -- omitted (None) sends normally, which
+        is correct for this platform's own auto-provisioned Flows (always published
+        immediately by POST .../whatsapp-flow/enable). See
+        Restaurant.whatsapp_quick_customize_flow_draft_mode for the one caller that passes
+        "draft" here, for a manually-built Flow that hasn't been published yet -- Meta
+        only delivers a draft Flow to phone numbers registered as test numbers for the
+        owning app, regardless of this parameter.
         """
+        parameters: dict[str, Any] = {
+            "flow_message_version": "3",
+            "flow_token": flow_token,
+            "flow_id": flow_id,
+            "flow_cta": cta[:30],
+            "flow_action": "navigate",
+            "flow_action_payload": {"screen": screen, "data": data or {}},
+        }
+        if mode:
+            parameters["mode"] = mode
         return cls(
             to,
             {
@@ -122,17 +141,7 @@ class OutboundMessage:
                 "interactive": {
                     "type": "flow",
                     "body": {"text": body[:1024]},
-                    "action": {
-                        "name": "flow",
-                        "parameters": {
-                            "flow_message_version": "3",
-                            "flow_token": flow_token,
-                            "flow_id": flow_id,
-                            "flow_cta": cta[:30],
-                            "flow_action": "navigate",
-                            "flow_action_payload": {"screen": screen, "data": data or {}},
-                        },
-                    },
+                    "action": {"name": "flow", "parameters": parameters},
                 },
             },
         )
@@ -330,7 +339,15 @@ class GraphAPIWhatsAppSender:
                 return
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code < 500:
-                    # 4xx is permanent (bad payload/recipient/token) -- retrying won't help.
+                    # 4xx is permanent (bad payload/recipient/token) -- retrying won't help,
+                    # but log the body here (not just in the retries-exhausted branch below,
+                    # which a 4xx skips entirely by raising immediately) so Meta's actual
+                    # rejection reason is visible without reproducing it by hand.
+                    logger.error(
+                        "WhatsApp send rejected: phone_number_id=%s type=%s status=%s body=%s",
+                        phone_number_id, message.payload.get("type"),
+                        exc.response.status_code, exc.response.text[:500],
+                    )
                     raise
                 # 5xx is Meta explicitly telling us the request was NOT accepted -- safe
                 # to retry, same as a connect failure below.

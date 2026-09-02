@@ -199,7 +199,8 @@ async def test_full_order_flow_with_cart_and_back_navigation(db_session, restaur
     await _send_text(db_session, sender, restaurant, CUSTOMER_PHONE, "Hi", profile_name=CUSTOMER_PROFILE_NAME)
     welcome_options = _extract_options(_last_interactive(sender))
     assert [o["id"] for o in welcome_options] == [
-        "welcome:order", "welcome:cart", "welcome:offers", "welcome:location", "welcome:contact", "welcome:human",
+        "welcome:order", "welcome:quick_order", "welcome:cart", "welcome:offers",
+        "welcome:location", "welcome:contact", "welcome:human",
     ]
     customer = await _get_customer(db_session, restaurant.id)
     assert customer.name == CUSTOMER_PROFILE_NAME  # auto-pulled from the WhatsApp profile

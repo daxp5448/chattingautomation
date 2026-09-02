@@ -19,6 +19,7 @@ from app.schemas.whatsapp_template import (
     WhatsAppTemplateUpdate,
 )
 from app.services import whatsapp_template_client
+from app.services.template_purpose_mapping import recommend_templates
 from app.services.whatsapp_client import GraphAPIWhatsAppSender, OutboundMessage
 
 router = APIRouter(prefix="/restaurants/{restaurant_id}/whatsapp-templates", tags=["whatsapp-templates"])
@@ -53,6 +54,21 @@ async def list_templates(restaurant_id: uuid.UUID, db: DbSession, user: CurrentU
     tenant_id = resolve_tenant_id(user, restaurant_id)
     repo = WhatsAppTemplateRepository(db)
     return await repo.list(restaurant_id=tenant_id)
+
+
+@router.get("/recommendations", response_model=dict[str, WhatsAppTemplateRead | None])
+async def get_template_recommendations(restaurant_id: uuid.UUID, db: DbSession, user: CurrentUser):
+    """Niche-aware template recommendation for Broadcast Campaigns -- the one place
+    templates are actually usable (see template_purpose_mapping.py's module docstring
+    for why this never touches the live conversation). Declared BEFORE /{template_id}
+    so "recommendations" is never matched as a template_id path param. Read-only, same
+    permission bar as list/get above -- this never mutates anything.
+    """
+    tenant_id = resolve_tenant_id(user, restaurant_id)
+    restaurant = await _get_restaurant_or_404(db, tenant_id)
+    templates = await WhatsAppTemplateRepository(db).list(restaurant_id=tenant_id)
+    recommended = recommend_templates(templates, restaurant.niche_type)
+    return {purpose.value: template for purpose, template in recommended.items()}
 
 
 @router.get("/{template_id}", response_model=WhatsAppTemplateRead)

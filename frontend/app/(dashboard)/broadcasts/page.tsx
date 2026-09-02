@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import { useCurrentRestaurant } from "@/lib/restaurant";
-import type { BroadcastCampaign, SegmentPreview, WhatsAppTemplate } from "@/lib/types";
+import type { BroadcastCampaign, SegmentPreview, TemplateRecommendations, WhatsAppTemplate } from "@/lib/types";
 
 const STATUS_STYLES: Record<BroadcastCampaign["status"], string> = {
   draft: "bg-slate-100 text-slate-600",
@@ -135,6 +135,7 @@ function BroadcastsForRestaurant({ restaurantId }: { restaurantId: string }) {
   const canManage = hasFeature("broadcasts");
   const [campaigns, setCampaigns] = useState<BroadcastCampaign[]>([]);
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [recommendations, setRecommendations] = useState<TemplateRecommendations | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -146,16 +147,24 @@ function BroadcastsForRestaurant({ restaurantId }: { restaurantId: string }) {
   const [creating, setCreating] = useState(false);
 
   const approvedTemplates = templates.filter((t) => t.status === "approved");
+  // Recommended-for-this-niche ids first (in recommendation order), then everything else
+  // approved -- see template_purpose_mapping.py; a template can be recommended for at
+  // most one purpose, so no duplicate entries across the two groups.
+  const recommendedIds = new Set(Object.values(recommendations || {}).filter((t): t is WhatsAppTemplate => !!t).map((t) => t.id));
+  const recommendedTemplates = approvedTemplates.filter((t) => recommendedIds.has(t.id));
+  const otherTemplates = approvedTemplates.filter((t) => !recommendedIds.has(t.id));
 
   async function load() {
     setLoading(true);
     try {
-      const [c, t] = await Promise.all([
+      const [c, t, r] = await Promise.all([
         apiFetch<BroadcastCampaign[]>(`/restaurants/${restaurantId}/broadcasts`),
         apiFetch<WhatsAppTemplate[]>(`/restaurants/${restaurantId}/whatsapp-templates`),
+        apiFetch<TemplateRecommendations>(`/restaurants/${restaurantId}/whatsapp-templates/recommendations`),
       ]);
       setCampaigns(c);
       setTemplates(t);
+      setRecommendations(r);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load broadcasts");
     } finally {
@@ -229,9 +238,20 @@ function BroadcastsForRestaurant({ restaurantId }: { restaurantId: string }) {
             <label className="block text-xs font-medium text-slate-500">Template (approved only)</label>
             <select required value={templateId} onChange={(e) => setTemplateId(e.target.value)} className="w-56 rounded-md border border-slate-300 px-3 py-1.5 text-sm">
               <option value="">Select a template</option>
-              {approvedTemplates.map((t) => (
-                <option key={t.id} value={t.id}>{t.name} ({t.category})</option>
-              ))}
+              {recommendedTemplates.length > 0 && (
+                <optgroup label="⭐ Recommended for your business">
+                  {recommendedTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.category})</option>
+                  ))}
+                </optgroup>
+              )}
+              {otherTemplates.length > 0 && (
+                <optgroup label={recommendedTemplates.length > 0 ? "Other templates" : "Templates"}>
+                  {otherTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.category})</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
           <div>

@@ -180,6 +180,28 @@ class TemplateStatus(str, enum.Enum):
     DISABLED = "disabled"
 
 
+class TemplatePurpose(str, enum.Enum):
+    """What a template is FOR, independent of which niche/business owns it -- lets
+    app/services/template_purpose_mapping.py recommend a tenant's own approved templates
+    for their niche's typical out-of-session touchpoints (Broadcast Campaigns), without
+    ever needing a template shared across tenants. GENERAL is the default for every
+    existing/unclassified template -- purely additive, nothing is reclassified without an
+    Owner explicitly picking a purpose. Values collapse near-synonymous niche concepts
+    (e.g. a jeweller's "product showcase" and a real-estate's "property showcase") onto
+    one shared vocabulary rather than one enum member per niche."""
+
+    PRODUCT_SHOWCASE = "product_showcase"
+    ENQUIRY = "enquiry"
+    APPOINTMENT = "appointment"
+    CONFIRMATION = "confirmation"
+    REMINDER = "reminder"
+    FOLLOW_UP = "follow_up"
+    OFFER = "offer"
+    BOOKING = "booking"
+    ORDER_CONFIRMATION = "order_confirmation"
+    GENERAL = "general"
+
+
 # --- Broadcast Module (app/tasks/broadcast_sender.py) -------------------------------
 
 

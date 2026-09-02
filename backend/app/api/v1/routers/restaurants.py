@@ -2,7 +2,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -24,6 +24,8 @@ from app.repositories.restaurant_repository import RestaurantRepository, invalid
 from app.repositories.user_repository import UserRepository
 from app.services.demo_restaurant_sync import sync_demo_restaurants
 from app.services.niche_provisioning import provision_from_template
+from app.services import image_storage_service
+from app.services.image_storage_service import ImageStorageError
 from app.schemas.audit_log import AuditLogRead
 from app.schemas.branch import BranchRead
 from app.schemas.coupon import CouponRead
@@ -337,6 +339,40 @@ async def update_restaurant(
             invalidate_restaurant_cache(restaurant.whatsapp_phone_number_id)
 
     return restaurant
+
+
+# logo_url/cover_image_url are plain strings on Restaurant, not a real CatalogItem row --
+# same reasoning as catalog.py's upload_catalog_category_image -- so branding images get
+# the same simple "upload -> permanent URL" pattern instead of the full Image pipeline.
+_BRANDING_IMAGE_CONTENT_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+_MAX_BRANDING_IMAGE_BYTES = 8 * 1024 * 1024
+
+
+@router.post("/{restaurant_id}/upload-image")
+async def upload_restaurant_branding_image(
+    restaurant_id: uuid.UUID, user: CurrentUser, file: UploadFile = File(...)
+) -> dict[str, str]:
+    tenant_id = resolve_tenant_id(user, restaurant_id)
+    if user.role not in (UserRole.SUPER_ADMIN, UserRole.OWNER):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    ext = _BRANDING_IMAGE_CONTENT_TYPES.get(file.content_type or "")
+    if ext is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only JPEG, PNG, or WebP images are allowed")
+    content = await file.read()
+    if len(content) > _MAX_BRANDING_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Image exceeds the {_MAX_BRANDING_IMAGE_BYTES // (1024 * 1024)}MB limit",
+        )
+
+    key = f"branding/{tenant_id}/{uuid.uuid4()}{ext}"
+    try:
+        image_storage_service.upload_bytes(key, content, file.content_type)
+    except ImageStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload image") from exc
+
+    return {"url": f"{settings.PUBLIC_MEDIA_BASE_URL}/{key}"}
 
 
 @router.patch("/{restaurant_id}/demo-mode", response_model=RestaurantRead)

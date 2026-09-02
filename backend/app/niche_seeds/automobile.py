@@ -366,4 +366,11 @@ TEMPLATE = {
     "default_modules": {
         "staff_selection": False,
     },
+    "default_personality": {
+        "tone": "professional_trustworthy",
+        "language": "auto",
+        "emoji_level": "low",
+        "response_length": "short",
+        "business_personality": "automobile",
+    },
 }

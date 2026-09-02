@@ -38,6 +38,16 @@ async def provision_from_template(session, restaurant: Restaurant, template: Nic
             "modules": {**template.default_modules, **restaurant.loyalty_settings.get("modules", {})},
         }
 
+    if template.default_personality:
+        # Same base-not-final-word merge as default_modules above, and the same
+        # plain-JSON-not-MutableDict reason for building a genuinely new dict rather than
+        # mutating restaurant.conversation_settings in place -- a business's own pre-set
+        # tone/language/emoji_level always wins over the niche's default.
+        restaurant.conversation_settings = {
+            **template.default_personality,
+            **restaurant.conversation_settings,
+        }
+
     for cat_order, category_data in enumerate(template.default_catalog):
         category = CatalogCategory(
             restaurant_id=restaurant.id,

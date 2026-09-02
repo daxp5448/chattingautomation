@@ -32,6 +32,7 @@ from app.repositories.generic_conversation_repository import GenericConversation
 from app.repositories.niche_template_repository import NicheTemplateRepository
 from app.services.generic_flow_engine import (
     GenericInteraction,
+    _looks_like_greeting,
     process_inbound_message,
     send_generic_message,
     send_generic_messages_batch,
@@ -40,11 +41,7 @@ from app.services.whatsapp_client import OutboundMessage, WhatsAppSender
 
 logger = logging.getLogger(__name__)
 
-# Explicit "leave this niche's demo and go back to the industry picker" signal. Plain "hi"
-# typed WHILE inside an active niche demo is deliberately NOT included here -- it falls
-# through to the engine's own existing greeting-reset behavior (generic_flow_engine.py's
-# _looks_like_greeting), which just restarts that same niche, the more natural "this is
-# what a real customer would experience" behavior for a demo.
+# Explicit "leave this niche's demo and go back to the industry picker" signal.
 #
 # "menu" and "switch" used to be in this set and were a real, reproducible bug: a
 # restaurant customer mid-order who typed "menu" wanting to see the food menu again (an
@@ -56,6 +53,20 @@ logger = logging.getLogger(__name__)
 # _MENU_REPLY_ID, not this free-text set) is unaffected and remains the reliable way to
 # leave a niche.
 _LEAVE_TO_PICKER_WORDS = {"industries", "industry", "other industry"}
+
+# A plain greeting ("hi"/"hello"/etc, see generic_flow_engine._looks_like_greeting) ALSO
+# leaves an active niche back to the picker -- a deliberate product choice (not the
+# engine's own greeting-reset default of restarting the same niche), so a demo prospect
+# who forgets the "industries" keyword can always just say hi to get back to the top.
+# Trade-off accepted knowingly: a real business's own customer, mid-order, who says "hi"
+# to check something will also get bounced back to the picker instead of staying in their
+# order -- unlike "menu"/"switch" above, this was requested as always-on behavior anyway.
+# One carve-out kept even so (see the `is_greeting` check further down in
+# handle_demo_inbound, deliberately NOT folded into is_leave_signal above): right after a
+# niche's conversation hits a terminal step, _send_terminal_step_offer's explicit
+# Continue/Switch buttons still get first refusal over a bare greeting, so
+# test_finishing_an_order_then_texting_offers_continue_or_switch_industry's guarantee
+# (ask, don't assume, the instant after an order finishes) keeps holding.
 _PICK_PREFIX = "demo:pick:"
 _MENU_REPLY_ID = "demo:menu"
 # Tapped from the "what next?" offer sent once a niche's own conversation reaches a
@@ -225,7 +236,11 @@ async def _send_terminal_step_offer(session, sender: WhatsAppSender, sentinel_re
     body = f"You're all set with *{display_name}* for now! What would you like to do next?"
     buttons = [
         {"id": _CONTINUE_REPLY_ID, "title": "🔄 Continue Browsing"},
-        {"id": _MENU_REPLY_ID, "title": "🌐 Try Another Industry"},
+        # WhatsApp hard-caps quick-reply button titles at 20 characters -- "Try Another
+        # Industry" (22 chars incl. emoji) silently truncated to "Try Another Indust" in
+        # the actual app; keep this short enough to never need OutboundMessage's own
+        # [:20] truncation to save it.
+        {"id": _MENU_REPLY_ID, "title": "🌐 Switch Industry"},
     ]
     await send_generic_message(
         session, sender, sentinel_restaurant, customer_id, from_phone,
@@ -256,6 +271,11 @@ async def handle_demo_inbound(
     reply_id = interaction.reply_id or ""
     text_norm = (interaction.text or "").strip().lower()
     is_leave_signal = reply_id == _MENU_REPLY_ID or text_norm in _LEAVE_TO_PICKER_WORDS
+    # A plain greeting is a WEAKER leave-signal than "industries"/the menu button: it only
+    # returns to the picker once we've confirmed (further below) the customer isn't sitting
+    # at a just-finished niche's terminal step, where _send_terminal_step_offer's explicit
+    # Continue/Switch buttons must win instead -- see is_greeting's own use below for why.
+    is_greeting = interaction.kind == "text" and _looks_like_greeting(interaction.text or "")
     is_button_pick = reply_id.startswith(_PICK_PREFIX)
     # Free-text pick ("3", "Jewellery") only makes sense while no niche is active yet and
     # the message isn't itself a leave-signal word -- never attempted mid-niche (that
@@ -382,8 +402,22 @@ async def handle_demo_inbound(
         await session.commit()
         return
 
-    # Already mid-demo, not a leave signal, not at a terminal step -- delegate straight
-    # into the real engine, completely unmodified. It does its own inbound Message
-    # logging (scoped to this niche's own demo restaurant/customer) and its own
-    # wa_message_id dedup check.
+    if is_greeting:
+        # Mid-niche, NOT at a terminal step: a plain "hi"/"hello" now returns to the
+        # industry picker (same effect as "industries"), rather than the engine's own
+        # default of just restarting this same niche. Checked only here, after the
+        # terminal-step branch above already had first refusal -- a greeting right after
+        # finishing an order must still get the explicit Continue/Switch offer, not get
+        # silently swallowed into the picker before the customer ever sees that choice.
+        sentinel_customer = await CustomerRepository(session).get_or_create(sentinel_restaurant.id, from_phone)
+        await _log_inbound(session, sentinel_restaurant, sentinel_customer.id, from_phone, interaction, wa_message_id)
+        demo_session.active_restaurant_id = None
+        await _send_industry_picker(session, sender, sentinel_restaurant, sentinel_customer.id, from_phone)
+        await session.commit()
+        return
+
+    # Already mid-demo, not a leave signal, not at a terminal step, not a greeting --
+    # delegate straight into the real engine, completely unmodified. It does its own
+    # inbound Message logging (scoped to this niche's own demo restaurant/customer) and
+    # its own wa_message_id dedup check.
     await process_inbound_message(session, sender, demo_restaurant, from_phone, interaction, wa_message_id)

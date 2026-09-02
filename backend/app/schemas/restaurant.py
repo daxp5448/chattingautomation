@@ -29,6 +29,7 @@ class RestaurantBase(BaseModel):
     payment_methods: list[str] = ["cod"]
     default_payment_method: str = "cod"
     loyalty_settings: dict[str, Any] = {}
+    conversation_settings: dict[str, Any] = {}
 
 
 class RestaurantCreate(RestaurantBase):
@@ -85,9 +86,12 @@ class RestaurantUpdate(BaseModel):
     payment_methods: list[str] | None = None
     default_payment_method: str | None = None
     loyalty_settings: dict[str, Any] | None = None
+    conversation_settings: dict[str, Any] | None = None
     whatsapp_phone_number_id: str | None = None
     whatsapp_business_account_id: str | None = None
     whatsapp_catalog_id: str | None = None
+    whatsapp_quick_customize_flow_id: str | None = None
+    whatsapp_quick_customize_flow_draft_mode: bool | None = None
     whatsapp_access_token: str | None = None
     whatsapp_verify_token: str | None = None
     razorpay_key_id: str | None = None
@@ -116,6 +120,13 @@ class RestaurantRead(RestaurantBase):
     # WhatsApp Flow ordering is enabled. The private key is never exposed here or anywhere
     # else via the API; only POST .../whatsapp-flow/enable|disable ever touches it.
     whatsapp_flow_order_id: str | None
+    # Unlike whatsapp_flow_order_id above (internal-only, set exclusively by the
+    # enable/disable endpoints), this one IS directly admin-settable -- see
+    # Restaurant.whatsapp_quick_customize_flow_id's model docstring for why: it's a
+    # manually-built Flow, so there's no "create it for me" endpoint to call, only an
+    # existing id to paste in.
+    whatsapp_quick_customize_flow_id: str | None = None
+    whatsapp_quick_customize_flow_draft_mode: bool = False
     razorpay_key_id: str | None
     status: RestaurantStatus
     trial_ends_at: datetime | None

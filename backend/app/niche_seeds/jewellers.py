@@ -391,4 +391,11 @@ TEMPLATE = {
         "item_label": "Piece",
     },
     "default_modules": {},
+    "default_personality": {
+        "tone": "premium_elegant",
+        "language": "auto",
+        "emoji_level": "none",
+        "response_length": "short",
+        "business_personality": "jeweller",
+    },
 }

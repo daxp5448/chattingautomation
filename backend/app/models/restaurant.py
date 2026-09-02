@@ -66,6 +66,27 @@ class Restaurant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     whatsapp_flow_order_id: Mapped[str | None] = mapped_column(String(50))
     whatsapp_flow_private_key_encrypted: Mapped[str | None] = mapped_column(String(4000))
 
+    # A SECOND, independent WhatsApp Flow slot -- deliberately separate from
+    # whatsapp_flow_order_id above, not a rename/reuse of it. That one is this platform's
+    # own auto-provisioned, multi-screen, catalog-browsing Flow (dynamic data-exchange,
+    # created fresh per-restaurant by POST .../whatsapp-flow/enable -- see
+    # whatsapp_flow_order_service.py's ORDER_FLOW_JSON). This one holds the id of a Flow
+    # an admin built manually in Meta's own Flow Builder UI and wants to use as-is --
+    # single static screen (item/quantity/notes), no endpoint, so its submission arrives
+    # as a plain `nfm_reply` webhook message (see webhook.py's nfm_reply handling), not
+    # through the encrypted data-exchange path the auto-provisioned Flow uses. No private
+    # key needed here for exactly that reason -- a static Flow's final submission isn't
+    # Meta-encrypted the way a dynamic Flow's screen-to-screen data-exchange calls are.
+    # NULL means off, same bias as every other opt-in Flow field on this model.
+    whatsapp_quick_customize_flow_id: Mapped[str | None] = mapped_column(String(50))
+    # Meta only delivers a DRAFT-status Flow to phone numbers registered as test numbers
+    # for the WhatsApp app that owns it -- true here is an explicit acknowledgment of that
+    # real constraint (adds "mode": "draft" to the outbound Flow message), not a general
+    # "developer mode" switch. An Owner must flip this to false once the Flow is
+    # published in Meta's Flow Builder, or real customers (not on the test-number list)
+    # simply won't receive it.
+    whatsapp_quick_customize_flow_draft_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Payment: which methods this restaurant accepts, and gateway credentials.
     # Generic per-gateway columns (rather than a dedicated Razorpay table) so the next
     # gateway (Stripe/PhonePe/UPI) slots in the same way without schema churn.
@@ -76,6 +97,19 @@ class Restaurant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     razorpay_webhook_secret_encrypted: Mapped[str | None] = mapped_column(String(2000))
 
     loyalty_settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    # Conversational tone for the WhatsApp bot -- read generically by
+    # generic_flow_engine.py's conversational_style.humanize(), never branched on by
+    # niche_type. Keys: "tone" (free label, e.g. "friendly_casual"/"premium_elegant"),
+    # "language" ("en"/"hinglish"/"auto"), "emoji_level" ("none"/"low"/"high"),
+    # "response_length" ("short"/"normal"), "business_personality" (free label, display
+    # only). Empty dict (the default) means humanize() no-ops entirely -- zero behavior
+    # change for a tenant that hasn't configured this. Populated at provisioning time
+    # from NicheTemplate.default_personality (see niche_provisioning.py), then freely
+    # editable per-business afterward like any other tenant setting. Plain JSON, not
+    # MutableDict -- always assign a whole new dict, never mutate in place (see
+    # niche_provisioning.py's loyalty_settings comment for why).
+    conversation_settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     status: Mapped[RestaurantStatus] = mapped_column(
         default=RestaurantStatus.ONBOARDING, nullable=False

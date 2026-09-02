@@ -373,4 +373,11 @@ TEMPLATE = {
         "staff_label": "Staff",
     },
     "default_modules": {},
+    "default_personality": {
+        "tone": "hospitality_polished",
+        "language": "auto",
+        "emoji_level": "low",
+        "response_length": "short",
+        "business_personality": "hotel",
+    },
 }

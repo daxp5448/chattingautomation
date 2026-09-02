@@ -87,7 +87,9 @@ from app.repositories.catalog_repository import CatalogCategoryRepository, Catal
 from app.repositories.customer_repository import CustomerRepository
 from app.repositories.engagement_repository import EngagementRepository
 from app.repositories.flow_definition_repository import FlowDefinitionRepository
-from app.services import analytics
+from app.services import analytics, conversation_lexicon
+from app.services.conversational_intent import _best_phrase_score, _normalize as _normalize_for_intent, resolve_interaction
+from app.services.conversational_style import humanize
 from app.repositories.generic_conversation_repository import GenericConversationStateRepository
 from app.repositories.jewellery_design_repository import JewelleryDesignRepository
 from app.repositories.meta_media_cache_repository import MetaMediaCacheRepository
@@ -116,13 +118,66 @@ SKIP_REPLY_ID = "__skip__"
 # id, so this is a no-op for them.
 JEWELLERY_LOAD_MORE_REPLY_ID = "__jewellery_more__"
 
+# interaction.kind="unhandled_media" (see GenericInteraction.media_kind and handle()) --
+# a polite, context-appropriate acknowledgement instead of the total silence these message
+# types got before this existed. Never advances/resets state: the customer stays exactly
+# where they were and can keep going. Unrecognized media_kind values (a WhatsApp message
+# type not in this map) fall back to _MEDIA_FALLBACK_DEFAULT.
+_MEDIA_FALLBACK_MESSAGES = {
+    "image": "📸 We received your image. An executive will review it shortly!",
+    "video": "🎥 We received your video. An executive will review it shortly!",
+    "audio": "🎤 We received your voice note. An executive will review it shortly!",
+    "document": "📄 We received your document. An executive will review it shortly!",
+    "sticker": "😄 Thanks for the sticker! Type *menu* any time to see our options.",
+    "order": "🛒 We received your order request. Our team will confirm the details with you shortly!",
+}
+_MEDIA_FALLBACK_DEFAULT = "We received your message. Type *menu* any time to see our options."
+
 # "menu" used to be in this set and was a real bug: a restaurant (or any niche's)
 # customer mid-conversation who typed "menu" wanting to see options/the food menu again
 # -- an entirely ordinary thing to type -- had their whole conversation silently reset to
 # welcome instead, discarding an in-progress cart/order/enquiry. Only words that are
 # essentially never a plausible mid-conversation utterance with some OTHER meaning stay
 # here.
-_GREETING_WORDS = {"hi", "hello", "hey", "hii", "hola", "start", "yo", "sup", "namaste"}
+_GREETING_WORDS = {"hi", "hello", "hey", "heyy", "hii", "hola", "halo", "start", "yo", "sup", "namaste"}
+# Fuzzy-typo tolerance is deliberately an explicit, hand-picked list, NOT everything in
+# _GREETING_WORDS above length 4 -- e.g. "start" is excluded on purpose: at edit-distance
+# 1 it also matches "smart"/"stark"/"stare", real words a customer could plausibly type
+# (a niche selling "smart" devices, say), and this file has already been bitten once by
+# an accidental-reset regression from an over-eager greeting match (see "menu" above).
+# "hello"/"namaste" are distinctive enough that a distance-1 neighbor is essentially
+# always a genuine typo, not real content.
+_FUZZY_GREETING_WORDS = {"hello", "namaste"}
+
+
+def _levenshtein_distance(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    if not a or not b:
+        return max(len(a), len(b))
+    previous_row = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        current_row = [i] + [0] * len(b)
+        for j, cb in enumerate(b, start=1):
+            current_row[j] = min(
+                previous_row[j] + 1,  # deletion
+                current_row[j - 1] + 1,  # insertion
+                previous_row[j - 1] + (ca != cb),  # substitution
+            )
+        previous_row = current_row
+    return previous_row[-1]
+
+# The manually-built "quick customize" WhatsApp Flow's own hardcoded dropdown options
+# (see Restaurant.whatsapp_quick_customize_flow_id's docstring) -- it's a single static
+# screen with fixed generic choices, not dynamic per-catalog-item data, so this mapping
+# is the Flow's actual, verified content (fetched directly from Meta's Graph API), not a
+# guess. Used only to turn the submitted "ITEM_1"/"ITEM_2"/"ITEM_3" id into a readable
+# {{quick_customize_item_label}} for a niche's own confirmation prompt template.
+_QUICK_CUSTOMIZE_ITEM_LABELS = {
+    "ITEM_1": "Standard Option",
+    "ITEM_2": "Premium Option",
+    "ITEM_3": "Custom Option",
+}
 _PLACEHOLDER_IMAGE = "https://placehold.co/600x400?text={label}"
 # Photo-burst ceiling (see _photo_burst_urls / _send_options): a category can override
 # via step["photo_burst_max"] (a plain flow-step field, already editable via Flow
@@ -213,17 +268,51 @@ def _looks_like_greeting(text: str) -> bool:
     if not normalized:
         return False
     words = normalized.split()
-    return len(words) <= 2 and all(w in _GREETING_WORDS for w in words)
+    if len(words) <= 2 and all(w in _GREETING_WORDS for w in words):
+        return True
+    # Typo tolerance -- deliberately scoped to a single-word message only (not the <=2
+    # word case above): a genuine two-word reply with one accidentally-fuzzy-matching
+    # word is far more likely to be real content ("start budget"?) than a typo'd
+    # greeting, so only a lone word gets the fuzzy check.
+    if len(words) == 1 and len(words[0]) >= 4:
+        return any(_levenshtein_distance(words[0], w) <= 1 for w in _FUZZY_GREETING_WORDS)
+    return False
+
+
+def _looks_like_restart(text: str) -> bool:
+    """"start again"/"restart"/"shuru se" etc (conversation_lexicon.RESTART_PHRASES) --
+    a SEPARATE check from _looks_like_greeting (not folded into it) so this module's
+    only other caller, demo_bot_service.py, is completely unaffected: it imports
+    _looks_like_greeting specifically for its own "hi mid-niche restarts that niche"
+    behavior, which must not gain this new phrase set as a side effect."""
+    if not text or not text.strip():
+        return False
+    normalized = _normalize_for_intent(text)
+    return bool(normalized) and _best_phrase_score(normalized, conversation_lexicon.RESTART_PHRASES) >= conversation_lexicon.INTENT_MATCH_THRESHOLD
 
 
 @dataclass
 class GenericInteraction:
-    kind: str  # "text" | "list_reply" | "button_reply" | "location"
+    kind: str  # "text" | "list_reply" | "button_reply" | "location" | "flow_reply" | "unhandled_media"
     text: str | None = None
     reply_id: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     profile_name: str | None = None
+    # kind="flow_reply" only -- the parsed `response_json` object from a static WhatsApp
+    # Flow's `nfm_reply` webhook message (see webhook.py's nfm_reply handling and
+    # Restaurant.whatsapp_quick_customize_flow_id's docstring for which Flow shape this
+    # is). Whatever field names/values the Flow's own "on-click-action" payload defines --
+    # this engine doesn't assume specific keys beyond what the send_quick_customize_flow
+    # step type itself reads.
+    flow_response: dict[str, Any] | None = None
+    # kind="unhandled_media" only -- the raw WhatsApp message `type` (see webhook.py's
+    # _extract_generic_interaction), e.g. "image"/"video"/"audio"/"document"/"sticker"/
+    # "order". Before this field existed, any of these message types fell through
+    # _extract_generic_interaction returning None and the webhook silently dropped them --
+    # a customer sending a photo or voice note got no reply at all. See handle()'s
+    # _MEDIA_FALLBACK_MESSAGES for the acknowledgement sent instead.
+    media_kind: str | None = None
 
 
 def _reference_number(restaurant: Restaurant, engagement_type: EngagementType) -> str:
@@ -516,15 +605,54 @@ class _Engine:
             await self._broadcast(restaurant.id, {"type": "generic_inbound_while_handed_off", "customer_id": str(customer.id)})
             return
 
+        if interaction.kind == "unhandled_media":
+            # Never touches state.current_step/context -- the customer stays exactly
+            # where they were and can keep going once they send a real reply.
+            body = _MEDIA_FALLBACK_MESSAGES.get(interaction.media_kind or "", _MEDIA_FALLBACK_DEFAULT)
+            await send_generic_message(
+                self.session, self.sender, restaurant, customer.id, from_phone, OutboundMessage.text(from_phone, body)
+            )
+            return
+
         steps_by_id = {s["step_id"]: s for s in flow_def.steps}
 
-        if interaction.kind == "text" and _looks_like_greeting(interaction.text or ""):
+        if interaction.kind == "text" and (_looks_like_greeting(interaction.text or "") or _looks_like_restart(interaction.text or "")):
             state.context = {}
             self._record_event(restaurant.id, analytics.FLOW_STARTED, customer_id=customer.id, niche_code=flow_def.niche_code)
             await self._advance_and_render(restaurant, customer, state, from_phone, steps_by_id[flow_def.entry_step_id], steps_by_id)
             return
 
         current = steps_by_id.get(state.current_step) or steps_by_id[flow_def.entry_step_id]
+
+        # Rule-based (no LLM) free-text intent resolution -- see conversational_intent.py.
+        # Rewrites/annotates `interaction` so every branch below (including the existing
+        # BACK_REPLY_ID check right below) sees something it already knows how to handle;
+        # never niche-specific, driven only by `current`'s own generic FlowDefinition data
+        # plus restaurant.conversation_settings. A real button/list tap (reply_id already
+        # set) always passes through resolve_interaction untouched.
+        resolved_options = await self._resolve_options(restaurant, state, current) if current.get("buttons_from") else []
+        resolved = resolve_interaction(interaction, resolved_options, state.context, restaurant)
+        if resolved.is_bot_query:
+            await self._send_bot_disclosure(restaurant, customer, state, from_phone, current, steps_by_id)
+            return
+        if resolved.ambiguous_candidates:
+            await self._send_disambiguation(restaurant, customer, from_phone, resolved.ambiguous_candidates)
+            return
+        if resolved.signal in ("cheaper", "show_more"):
+            handled = await self._apply_refinement_signal(
+                restaurant, customer, state, from_phone, current, steps_by_id, resolved_options, resolved.signal
+            )
+            if handled:
+                return
+        elif resolved.signal == "change_qty":
+            target_step = self._find_nearest_quantity_step(current, steps_by_id)
+            if target_step is not None:
+                await self._advance_and_render(restaurant, customer, state, from_phone, target_step, steps_by_id)
+                return
+        elif resolved.signal == "back":
+            interaction.reply_id = BACK_REPLY_ID
+        elif resolved.synthetic_reply_id:
+            interaction.reply_id = resolved.synthetic_reply_id
 
         if interaction.reply_id == BACK_REPLY_ID:
             target = current.get("back_target")
@@ -543,6 +671,87 @@ class _Engine:
             return
 
         await self._process_input(restaurant, customer, state, from_phone, current, steps_by_id, interaction)
+
+    # --- conversational-intent helpers (see conversational_intent.py) ------------------
+
+    async def _send_bot_disclosure(self, restaurant, customer, state, from_phone, current, steps_by_id) -> None:
+        """Spec requirement: never pretend to be human. One fixed, honest line -- never
+        an LLM-generated one, so it can never accidentally claim something untrue -- then
+        the current step is simply re-rendered so the conversation carries on normally."""
+        await send_generic_message(
+            self.session, self.sender, restaurant, customer.id, from_phone,
+            OutboundMessage.text(
+                from_phone,
+                f"Yep, I'm the virtual assistant for *{restaurant.name}* 🙂 I can help with products, orders, and enquiries.",
+            ),
+        )
+        await self._render_step(restaurant, customer, state, from_phone, current, steps_by_id)
+
+    async def _send_disambiguation(self, restaurant, customer, from_phone, candidates: list[dict]) -> None:
+        """2-3 real, already-resolved options (never invented) the free text scored close
+        to -- state.current_step is deliberately left untouched, so the customer's next
+        tap on one of these (already-valid) ids flows through the completely normal,
+        existing menu_select matching in _process_input; no new rendering machinery."""
+        buttons = [{"id": c["id"], "title": c["title"][:20]} for c in candidates]
+        await send_generic_message(
+            self.session, self.sender, restaurant, customer.id, from_phone,
+            OutboundMessage.interactive_buttons(from_phone, "Just to confirm -- did you mean one of these?", buttons),
+        )
+
+    def _find_nearest_quantity_step(self, current: dict, steps_by_id: dict) -> dict | None:
+        """"change quantity" typed as free text -- walks the existing back_target chain
+        (never a hardcoded step id) looking for the nearest quantity_input step, same
+        generic navigation data BACK_REPLY_ID already uses. Bounded hop count so a
+        malformed/cyclic flow graph can never hang this."""
+        step = current
+        for _ in range(6):
+            target_id = step.get("back_target")
+            if not target_id:
+                return None
+            step = steps_by_id.get(target_id)
+            if step is None:
+                return None
+            if step.get("type") == "quantity_input":
+                return step
+        return None
+
+    async def _apply_refinement_signal(
+        self, restaurant, customer, state, from_phone, current, steps_by_id, options: list[dict], signal: str
+    ) -> bool:
+        """"anything cheaper?"/"show more" on a step whose options are already resolved --
+        operates only on that already-fetched, real data (re-sorting/re-paginating it),
+        never invents an item. Returns False (caller falls through to normal processing)
+        when the current step doesn't support this signal, rather than silently no-oping."""
+        if signal == "show_more" and current.get("type") == "jewellery_design_gallery":
+            context = state.context
+            context["jewellery_page"] = int(context.get("jewellery_page", 0)) + 1
+            state.context = context
+            await self._render_step(restaurant, customer, state, from_phone, current, steps_by_id)
+            return True
+
+        if signal == "cheaper" and current.get("buttons_from") == "items" and options:
+            category_id = state.context.get(current.get("category_context_key", "category_id"))
+            if not category_id:
+                return False
+            items = await self.item_repo.list_by_category(uuid.UUID(category_id), restaurant.id)
+            items_by_price = sorted(items, key=lambda i: float(i.price or 0))
+            images_by_item = await resolve_item_images_bulk(self.session, items_by_price, restaurant.id)
+            sorted_options = [
+                {
+                    "id": f"item:{i.id}",
+                    "title": i.name,
+                    "description": _price_label(restaurant, i, include_attributes=True),
+                    "image_url": next((img.url for img in images_by_item.get(i.id, [])), None),
+                }
+                for i in items_by_price
+            ]
+            await self._send_options(
+                restaurant, customer, from_phone, "Sure -- here they are, lowest price first:", sorted_options,
+                bool(current.get("back_target")), current, state.context,
+            )
+            return True
+
+        return False
 
     # --- per-step-type input processing -----------------------------------------------
 
@@ -631,6 +840,30 @@ class _Engine:
                     # {{address}} alias -- delivery_address is the one free_text_input
                     # capture_key name that "address" naturally refers to across niches.
                     context["address"] = text
+            state.context = context
+            await self._advance(restaurant, customer, state, from_phone, self._resolve_next(step, None), steps_by_id)
+            return
+
+        if step_type == "send_quick_customize_flow":
+            if interaction.kind != "flow_reply":
+                # Customer typed/tapped something other than completing the Flow --
+                # same "please pick one of the options below" re-render every other
+                # step type already uses for unrecognized input, not a hard error.
+                await self._render_step(restaurant, customer, state, from_phone, step, steps_by_id, invalid=True)
+                return
+            response = interaction.flow_response or {}
+            # This specific Flow's own field names (item_id/qty/notes -- see
+            # Restaurant.whatsapp_quick_customize_flow_id's docstring) mapped onto the
+            # SAME context keys quantity_input/free_text_input already populate, so a
+            # niche's own confirmation prompt can reuse {{quantity}}/{{note}} naturally
+            # instead of needing brand-new template variable names.
+            item_id = response.get("item_id")
+            context["quick_customize_item_id"] = item_id
+            context["quick_customize_item_label"] = _QUICK_CUSTOMIZE_ITEM_LABELS.get(item_id, item_id or "your selection")
+            if response.get("qty"):
+                context["quantity"] = str(response["qty"])
+            if response.get("notes"):
+                context["note"] = response["notes"]
             state.context = context
             await self._advance(restaurant, customer, state, from_phone, self._resolve_next(step, None), steps_by_id)
             return
@@ -789,6 +1022,18 @@ class _Engine:
         if invalid:
             prompt = "Sorry, please pick one of the options below.\n\n" + prompt
 
+        # Outbound phrasing layer (see conversational_style.py) -- wraps the ALREADY fully
+        # composed prompt (real catalog data/{{variables}} already substituted, and any
+        # invalid-input prefix already applied above) with a tone-appropriate
+        # acknowledgement/emoji-level/length adjustment; a true no-op for any restaurant
+        # that hasn't configured conversation_settings. "welcome" is every niche's own
+        # entry_step_id (see each app/niche_seeds/*.py TEMPLATE) -- used here only to skip
+        # an acknowledgement on the very first message of a session, never a niche branch.
+        prompt = humanize(
+            prompt, restaurant, f"{customer.id}:{step.get('step_id')}",
+            is_reprompt=invalid, is_entry_step=step.get("step_id") == "welcome",
+        )
+
         show_back = bool(step.get("back_target"))
 
         # NODE_VIEWED fires for every step actually shown to a customer, including an
@@ -874,6 +1119,39 @@ class _Engine:
                 OutboundMessage.flow(
                     from_phone, prompt, restaurant.whatsapp_flow_order_id, from_phone,
                     step.get("cta") or "Order Now", "CATEGORY_SCREEN", data,
+                ),
+            )
+            return
+
+        if step["type"] == "send_quick_customize_flow":
+            # A SECOND, independent WhatsApp Flow slot -- see
+            # Restaurant.whatsapp_quick_customize_flow_id's docstring for how this differs
+            # from send_whatsapp_flow above (single static screen, no data-exchange, reply
+            # arrives as an nfm_reply webhook message -- see handle() below and
+            # webhook.py's nfm_reply parsing). Resolved from whichever restaurant actually
+            # sends (demo_sends_via_restaurant_id-aware, same pattern _media_message
+            # already uses) since a demo niche restaurant never carries this field itself
+            # -- only the sentinel it sends through does.
+            send_via = restaurant
+            if restaurant.demo_sends_via_restaurant_id:
+                send_via = await self.session.get(Restaurant, restaurant.demo_sends_via_restaurant_id)
+            if not send_via.whatsapp_quick_customize_flow_id:
+                fallback = steps_by_id.get(step.get("fallback_next") or step.get("next") or "")
+                if fallback:
+                    await self._advance_and_render(restaurant, customer, state, from_phone, fallback, steps_by_id)
+                return
+            await send_generic_message(
+                self.session, self.sender, restaurant, customer.id, from_phone,
+                OutboundMessage.flow(
+                    from_phone, prompt, send_via.whatsapp_quick_customize_flow_id, from_phone,
+                    step.get("cta") or "Customize & Select Qty", "ORDER_SCREEN",
+                    # Meta rejects a genuinely empty {} here with error 131009 ("data in
+                    # flow_action_payload for CTA flow must be of type dynamic_object") --
+                    # confirmed via a direct Graph API call. ORDER_SCREEN has no real
+                    # fields to prefill, so this is a harmless non-empty placeholder, not
+                    # data the screen actually reads.
+                    {"placeholder": "placeholder"},
+                    mode="draft" if send_via.whatsapp_quick_customize_flow_draft_mode else None,
                 ),
             )
             return

@@ -36,6 +36,7 @@ from app.niche_seeds import __path__ as _niche_seeds_package_path
 _TEMPLATE_COLUMNS = (
     "name", "action_type", "icon", "welcome_message", "welcome_banner_image",
     "welcome_buttons", "default_catalog", "default_flow_steps", "terminology", "default_modules",
+    "default_personality",
 )
 
 

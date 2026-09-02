@@ -5,7 +5,7 @@ import { apiFetch, ApiError } from "@/lib/api";
 import { RequireRestaurant } from "@/components/RequireRestaurant";
 import { WhatsAppFlowToggle } from "@/components/WhatsAppFlowToggle";
 import { useCurrentRestaurant } from "@/lib/restaurant";
-import type { WhatsAppTemplate } from "@/lib/types";
+import type { TemplatePurpose, TemplateRecommendations, WhatsAppTemplate } from "@/lib/types";
 
 const STATUS_STYLES: Record<WhatsAppTemplate["status"], string> = {
   draft: "bg-slate-100 text-slate-600",
@@ -14,6 +14,20 @@ const STATUS_STYLES: Record<WhatsAppTemplate["status"], string> = {
   rejected: "bg-red-100 text-red-700",
   disabled: "bg-slate-200 text-slate-500",
 };
+
+const PURPOSE_LABELS: Record<TemplatePurpose, string> = {
+  product_showcase: "Product Showcase",
+  enquiry: "Enquiry",
+  appointment: "Appointment",
+  confirmation: "Confirmation",
+  reminder: "Reminder",
+  follow_up: "Follow-up",
+  offer: "Offer",
+  booking: "Booking",
+  order_confirmation: "Order Confirmation",
+  general: "General",
+};
+const PURPOSE_OPTIONS = Object.entries(PURPOSE_LABELS) as [TemplatePurpose, string][];
 
 function parseExamples(raw: string): string[] {
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
@@ -26,6 +40,7 @@ function TemplateRow({ template, restaurantId, onChanged }: { template: WhatsApp
   const [editing, setEditing] = useState(false);
   const [bodyText, setBodyText] = useState(template.body_text);
   const [examples, setExamples] = useState(template.variable_examples.join(", "));
+  const [purpose, setPurpose] = useState<TemplatePurpose>(template.purpose);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,7 +54,7 @@ function TemplateRow({ template, restaurantId, onChanged }: { template: WhatsApp
     try {
       await apiFetch(`/restaurants/${restaurantId}/whatsapp-templates/${template.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ body_text: bodyText, variable_examples: parseExamples(examples) }),
+        body: JSON.stringify({ body_text: bodyText, variable_examples: parseExamples(examples), purpose }),
       });
       setEditing(false);
       onChanged();
@@ -101,6 +116,7 @@ function TemplateRow({ template, restaurantId, onChanged }: { template: WhatsApp
             <span className="font-mono text-sm font-medium text-slate-800">{template.name}</span>
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[template.status]}`}>{template.status}</span>
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">{template.category}</span>
+            <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{PURPOSE_LABELS[template.purpose]}</span>
             <span className="text-[11px] text-slate-400">{template.language}</span>
           </div>
           <p className="mt-1 text-sm text-slate-600">{template.body_text}</p>
@@ -149,6 +165,14 @@ function TemplateRow({ template, restaurantId, onChanged }: { template: WhatsApp
             <label className="block text-xs font-medium text-slate-500">Variable examples (comma separated, in {"{{1}}"} order)</label>
             <input value={examples} onChange={(e) => setExamples(e.target.value)} placeholder="Asha, ORD123" className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
           </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500">Purpose (used to recommend this template for Broadcast Campaigns)</label>
+            <select value={purpose} onChange={(e) => setPurpose(e.target.value as TemplatePurpose)} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm">
+              {PURPOSE_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
           <button onClick={save} disabled={saving} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
             {saving ? "Saving..." : "Save"}
           </button>
@@ -178,11 +202,13 @@ function WhatsAppTemplatesForRestaurant({ restaurantId }: { restaurantId: string
   const { hasFeature } = useCurrentRestaurant();
   const canManage = hasFeature("whatsapp_template_manager");
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [recommendations, setRecommendations] = useState<TemplateRecommendations | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [category, setCategory] = useState<WhatsAppTemplate["category"]>("utility");
+  const [purpose, setPurpose] = useState<TemplatePurpose>("general");
   const [language, setLanguage] = useState("en_US");
   const [bodyText, setBodyText] = useState("");
   const [examples, setExamples] = useState("");
@@ -191,7 +217,12 @@ function WhatsAppTemplatesForRestaurant({ restaurantId }: { restaurantId: string
   async function load() {
     setLoading(true);
     try {
-      setTemplates(await apiFetch<WhatsAppTemplate[]>(`/restaurants/${restaurantId}/whatsapp-templates`));
+      const [tpls, recs] = await Promise.all([
+        apiFetch<WhatsAppTemplate[]>(`/restaurants/${restaurantId}/whatsapp-templates`),
+        apiFetch<TemplateRecommendations>(`/restaurants/${restaurantId}/whatsapp-templates/recommendations`),
+      ]);
+      setTemplates(tpls);
+      setRecommendations(recs);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load templates");
     } finally {
@@ -212,7 +243,7 @@ function WhatsAppTemplatesForRestaurant({ restaurantId }: { restaurantId: string
       await apiFetch(`/restaurants/${restaurantId}/whatsapp-templates`, {
         method: "POST",
         body: JSON.stringify({
-          name, category, language, body_text: bodyText, variable_examples: parseExamples(examples),
+          name, category, purpose, language, body_text: bodyText, variable_examples: parseExamples(examples),
         }),
       });
       setName("");
@@ -236,6 +267,43 @@ function WhatsAppTemplatesForRestaurant({ restaurantId }: { restaurantId: string
         </p>
       </div>
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+      {recommendations && Object.keys(recommendations).length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-800">Recommended for your business</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Based on your industry, these are the template purposes a Broadcast Campaign typically needs -- shown
+            here purely as a guide; picking a template for a campaign is still manual.
+          </p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="text-xs font-medium text-slate-500">
+                  <th className="py-1 pr-4">Purpose</th>
+                  <th className="py-1 pr-4">Selected Template</th>
+                  <th className="py-1">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(Object.entries(recommendations) as [TemplatePurpose, WhatsAppTemplate | null][]).map(([purposeKey, tpl]) => (
+                  <tr key={purposeKey} className="border-t border-slate-100">
+                    <td className="py-1.5 pr-4 text-slate-700">{PURPOSE_LABELS[purposeKey]}</td>
+                    <td className="py-1.5 pr-4 font-mono text-xs text-slate-600">{tpl ? tpl.name : "--"}</td>
+                    <td className="py-1.5">
+                      {tpl ? (
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[tpl.status]}`}>{tpl.status}</span>
+                      ) : (
+                        <span className="text-xs text-slate-400">No approved template yet</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <WhatsAppFlowToggle restaurantId={restaurantId} />
       {!canManage && (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -257,6 +325,14 @@ function WhatsAppTemplatesForRestaurant({ restaurantId }: { restaurantId: string
               <option value="utility">Utility</option>
               <option value="marketing">Marketing</option>
               <option value="authentication">Authentication</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500">Purpose</label>
+            <select value={purpose} onChange={(e) => setPurpose(e.target.value as TemplatePurpose)} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm">
+              {PURPOSE_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
             </select>
           </div>
           <div>

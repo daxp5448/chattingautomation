@@ -392,4 +392,11 @@ TEMPLATE = {
     "default_modules": {
         "staff_selection": True,
     },
+    "default_personality": {
+        "tone": "warm_friendly_conversational",
+        "language": "auto",
+        "emoji_level": "high",
+        "response_length": "short",
+        "business_personality": "salon",
+    },
 }

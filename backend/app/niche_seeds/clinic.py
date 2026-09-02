@@ -374,4 +374,11 @@ TEMPLATE = {
     "default_modules": {
         "staff_selection": True,
     },
+    "default_personality": {
+        "tone": "professional_calm",
+        "language": "auto",
+        "emoji_level": "low",
+        "response_length": "short",
+        "business_personality": "clinic",
+    },
 }

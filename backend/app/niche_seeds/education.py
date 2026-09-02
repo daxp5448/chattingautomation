@@ -335,4 +335,11 @@ TEMPLATE = {
         "staff_label": "Counselor",
     },
     "default_modules": {},
+    "default_personality": {
+        "tone": "helpful_encouraging",
+        "language": "auto",
+        "emoji_level": "low",
+        "response_length": "short",
+        "business_personality": "education",
+    },
 }

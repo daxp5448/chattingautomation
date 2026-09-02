@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.db.types import GUID
-from app.models.enums import TemplateCategory, TemplateStatus
+from app.models.enums import TemplateCategory, TemplatePurpose, TemplateStatus
 
 
 class WhatsAppTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -35,6 +35,11 @@ class WhatsAppTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(512), nullable=False)
     category: Mapped[TemplateCategory] = mapped_column(nullable=False)
     language: Mapped[str] = mapped_column(String(10), nullable=False)
+    # What this template is FOR (see TemplatePurpose docstring) -- lets
+    # template_purpose_mapping.py recommend this tenant's own approved templates for
+    # their niche's typical Broadcast Campaign use cases. GENERAL by default; an Owner
+    # sets it explicitly, never inferred/guessed from body_text.
+    purpose: Mapped[TemplatePurpose] = mapped_column(default=TemplatePurpose.GENERAL, nullable=False)
     # Positional {{1}}, {{2}}, ... placeholders only for this pass -- see module docstring
     # in whatsapp_template_client.py for the scope cut (no header/footer/buttons/named vars).
     body_text: Mapped[str] = mapped_column(String(1024), nullable=False)

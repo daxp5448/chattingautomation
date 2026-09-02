@@ -324,4 +324,11 @@ TEMPLATE = {
         "item_label": "Product",
     },
     "default_modules": {},
+    "default_personality": {
+        "tone": "simple_quick_convenient",
+        "language": "auto",
+        "emoji_level": "high",
+        "response_length": "short",
+        "business_personality": "grocery",
+    },
 }

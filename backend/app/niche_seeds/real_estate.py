@@ -377,4 +377,11 @@ TEMPLATE = {
         "staff_label": "Agent",
     },
     "default_modules": {},
+    "default_personality": {
+        "tone": "professional_informative",
+        "language": "auto",
+        "emoji_level": "low",
+        "response_length": "normal",
+        "business_personality": "real_estate",
+    },
 }

@@ -349,4 +349,11 @@ TEMPLATE = {
     "default_modules": {
         "staff_selection": True,
     },
+    "default_personality": {
+        "tone": "energetic_motivating",
+        "language": "auto",
+        "emoji_level": "high",
+        "response_length": "short",
+        "business_personality": "gym",
+    },
 }

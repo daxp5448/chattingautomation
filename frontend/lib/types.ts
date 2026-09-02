@@ -43,6 +43,8 @@ export interface Restaurant {
   whatsapp_phone_number_id: string | null;
   whatsapp_business_account_id: string | null;
   whatsapp_catalog_id: string | null;
+  whatsapp_quick_customize_flow_id: string | null;
+  whatsapp_quick_customize_flow_draft_mode: boolean;
   // Set once native WhatsApp Flow ordering is enabled (POST .../whatsapp-flow/enable) --
   // see components/WhatsAppFlowToggle.tsx.
   whatsapp_flow_order_id: string | null;
@@ -52,6 +54,13 @@ export interface Restaurant {
   loyalty_settings: {
     points_per_currency_unit?: number;
     redemption_value_per_point?: number;
+  };
+  conversation_settings?: {
+    tone?: string;
+    language?: string;
+    emoji_level?: string;
+    response_length?: string;
+    business_personality?: string;
   };
   // Only populated by GET /restaurants (the super-admin list) -- see
   // backend RestaurantListItem. Absent on a single-restaurant fetch.
@@ -542,11 +551,24 @@ export interface Coupon {
 // GET/POST/PATCH /restaurants/{id}/whatsapp-templates -- Meta Message Templates, needed
 // to message a customer outside the 24-hour customer-service window. `status` mirrors
 // Meta's own vocabulary; DRAFT is local-only. Editable only while draft or rejected.
+export type TemplatePurpose =
+  | "product_showcase"
+  | "enquiry"
+  | "appointment"
+  | "confirmation"
+  | "reminder"
+  | "follow_up"
+  | "offer"
+  | "booking"
+  | "order_confirmation"
+  | "general";
+
 export interface WhatsAppTemplate {
   id: string;
   restaurant_id: string;
   name: string;
   category: "marketing" | "utility" | "authentication";
+  purpose: TemplatePurpose;
   language: string;
   body_text: string;
   variable_examples: string[];
@@ -558,6 +580,10 @@ export interface WhatsAppTemplate {
   created_at: string;
   updated_at: string;
 }
+
+// GET /restaurants/{id}/whatsapp-templates/recommendations -- this tenant's best APPROVED
+// template per purpose their niche typically needs (null = no approved match yet).
+export type TemplateRecommendations = Partial<Record<TemplatePurpose, WhatsAppTemplate | null>>;
 
 // GET/POST/PATCH /restaurants/{id}/broadcasts -- bulk WhatsApp campaigns to a customer
 // segment, using an APPROVED WhatsAppTemplate. Recipients only exist once a campaign has

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.enums import TemplateCategory, TemplateStatus
+from app.models.enums import TemplateCategory, TemplatePurpose, TemplateStatus
 
 # Meta's own naming rule: lowercase letters, digits, underscores only.
 _NAME_PATTERN = re.compile(r"^[a-z0-9_]+$")
@@ -13,6 +13,7 @@ _NAME_PATTERN = re.compile(r"^[a-z0-9_]+$")
 class WhatsAppTemplateBase(BaseModel):
     name: str = Field(min_length=1, max_length=512)
     category: TemplateCategory
+    purpose: TemplatePurpose = TemplatePurpose.GENERAL
     language: str = Field(min_length=2, max_length=10)
     body_text: str = Field(min_length=1, max_length=1024)
     variable_examples: list[str] = []
@@ -35,6 +36,7 @@ class WhatsAppTemplateUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=512)
     category: TemplateCategory | None = None
+    purpose: TemplatePurpose | None = None
     language: str | None = Field(default=None, min_length=2, max_length=10)
     body_text: str | None = Field(default=None, min_length=1, max_length=1024)
     variable_examples: list[str] | None = None
