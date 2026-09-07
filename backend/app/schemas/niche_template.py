@@ -24,6 +24,19 @@ class NicheTemplateSummary(BaseModel):
     default_personality: dict[str, Any]
 
 
+class NichePublicSummary(BaseModel):
+    """Unauthenticated niche picker for the public /signup page (see GET /signup/niches).
+    Deliberately narrower than NicheTemplateSummary -- a stranger picking an industry needs
+    just enough to render a picker, nothing about internal flow-engine configuration
+    (no id, action_type, terminology, or module/personality defaults)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    name: str
+    icon: str | None
+
+
 class NicheCatalogItem(BaseModel):
     name: str
     description: str | None = None

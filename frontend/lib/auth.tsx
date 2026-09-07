@@ -13,10 +13,27 @@ interface Claims {
   email: string;
 }
 
+export interface SignupPayload {
+  business_name: string;
+  owner_email: string;
+  password: string;
+  niche_code: string;
+}
+
+export interface SignupResult {
+  restaurant_id: string;
+  owner_email: string;
+  // Only returned outside production, so local/staging signups work without SMTP -- see
+  // app/api/v1/routers/signup.py::_debug_otp.
+  debug_otp_code: string | null;
+}
+
 interface AuthContextValue {
   user: Claims | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  signup: (payload: SignupPayload) => Promise<SignupResult>;
+  verifyOtp: (restaurantId: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -41,6 +58,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me);
   }
 
+  async function signup(payload: SignupPayload) {
+    // No session exists yet -- the account isn't usable until the OTP is verified, so
+    // this deliberately doesn't touch `user` state the way login() does.
+    return apiFetch<SignupResult>("/signup", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  async function verifyOtp(restaurantId: string, code: string) {
+    await apiFetch("/signup/verify-otp", {
+      method: "POST",
+      body: JSON.stringify({ restaurant_id: restaurantId, code }),
+    });
+    const me = await apiFetch<Claims>("/auth/me");
+    setUser(me);
+  }
+
   async function logout() {
     try {
       await apiFetch("/auth/logout", { method: "POST" });
@@ -50,7 +82,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
-  return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, loading, login, signup, verifyOtp, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextValue {

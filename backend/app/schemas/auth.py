@@ -40,6 +40,45 @@ class SetupCompleteRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class SignupRequest(BaseModel):
+    """Body for POST /signup -- the public self-serve signup form. Deliberately narrow:
+    unlike RestaurantCreate (used by the admin-only POST /restaurants), this schema has no
+    is_demo/feature_package_id/whatsapp_*/razorpay_* fields at all, so there is no
+    allowlist/excludelist to keep in sync -- a stranger simply cannot set them because the
+    fields don't exist here."""
+
+    business_name: str = Field(min_length=2, max_length=200)
+    owner_email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    niche_code: str
+
+
+class SignupResult(BaseModel):
+    restaurant_id: uuid.UUID
+    owner_email: EmailStr
+    # Only populated outside production (see app/core/config.py::settings.ENVIRONMENT) --
+    # mirrors the existing RestaurantCreateResult.setup_url convention of returning an
+    # out-of-band secret directly in dev/test so nothing here depends on SMTP being
+    # configured locally. Never populated in production; the OTP is only ever emailed then.
+    debug_otp_code: str | None = None
+
+
+class VerifyOtpRequest(BaseModel):
+    # Keyed by restaurant_id (already in the frontend's hand from POST /signup's response),
+    # not owner_email, so this endpoint doesn't become a second email-enumeration surface.
+    restaurant_id: uuid.UUID
+    code: str = Field(min_length=6, max_length=6)
+
+
+class ResendOtpRequest(BaseModel):
+    restaurant_id: uuid.UUID
+
+
+class ResendOtpResult(BaseModel):
+    sent: bool
+    debug_otp_code: str | None = None
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

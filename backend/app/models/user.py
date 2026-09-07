@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -25,6 +25,20 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # never populates these).
     setup_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     setup_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+    # Self-serve signup email verification (see POST /signup, POST /signup/verify-otp).
+    # A self-signed-up owner is created with a REAL, usable hashed_password (unlike the
+    # admin-invite setup-token flow above, whose password is an unusable random hash) but
+    # is_active=False until this OTP is verified -- get_current_user's is_active check
+    # blocks login/API access until then. Nullable/unused once verified (or for users
+    # created through any other path, which never populate these). otp_attempts resets to
+    # 0 on each new code issuance (wrong-guess lockout for THIS code); otp_resend_count
+    # persists for the whole pending-verification lifetime (lifetime cap on how many codes
+    # get sent, independent of guess attempts).
+    otp_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    otp_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    otp_resend_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Null for super_admin (platform-wide); scoped to one restaurant otherwise.
     restaurant_id: Mapped[uuid.UUID | None] = mapped_column(

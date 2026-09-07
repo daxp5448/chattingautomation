@@ -12,7 +12,15 @@ from app.core.ws_manager import manager as ws_manager
 from app.models.branch import Branch
 from app.models.category import Category
 from app.models.conversation_state import ConversationState
-from app.models.enums import BranchStatus, ConversationStep, FulfillmentType, MessageDirection, MessageSender, PaymentMethod
+from app.models.enums import (
+    BranchStatus,
+    ConversationStep,
+    FulfillmentType,
+    MessageDirection,
+    MessageSender,
+    PaymentMethod,
+    RestaurantStatus,
+)
 from app.models.message import Message
 from app.models.order import Order
 from app.models.product import Product
@@ -1105,21 +1113,28 @@ class FlowEngine:
         await ws_manager.broadcast(restaurant.id, {"type": "handover", "customer_id": str(state.customer_id)})
 
 
+def _unavailable_notice_text(status: RestaurantStatus) -> str:
+    if status == RestaurantStatus.PENDING_REVIEW:
+        # Deliberately distinct, non-alarming copy -- a self-serve signup awaiting Super
+        # Admin approval is a normal, expected, temporary state for a legitimate new
+        # business, not a problem state the way suspended/cancelled are.
+        return "Thanks for your message! This business's WhatsApp ordering is still being set up and isn't taking orders yet -- please check back soon."
+    return "We're sorry, this restaurant isn't taking WhatsApp orders right now. Please check back later."
+
+
 async def send_unavailable_notice(sender: WhatsAppSender, restaurant: Restaurant, from_phone: str) -> None:
-    """For a suspended/cancelled restaurant (see app/api/v1/routers/webhook.py) -- a
-    plain, un-logged, state-free send. Deliberately doesn't touch ConversationState or
-    Message history: a blocked account shouldn't accumulate conversation state, and there
-    is nothing useful to resume once it's reactivated (the customer just says "hi" again).
+    """For a suspended/cancelled/pending-review restaurant (see
+    app/api/v1/routers/webhook.py) -- a plain, un-logged, state-free send. Deliberately
+    doesn't touch ConversationState or Message history: a blocked account shouldn't
+    accumulate conversation state, and there is nothing useful to resume once it's
+    reactivated (the customer just says "hi" again).
     """
     access_token = decrypt_secret(restaurant.whatsapp_access_token_encrypted or "")
     try:
         await sender.send(
             restaurant.whatsapp_phone_number_id or "",
             access_token,
-            OutboundMessage.text(
-                from_phone,
-                "We're sorry, this restaurant isn't taking WhatsApp orders right now. Please check back later.",
-            ),
+            OutboundMessage.text(from_phone, _unavailable_notice_text(restaurant.status)),
         )
     except Exception:
         logger.warning("Failed to send unavailable-notice for restaurant %s", restaurant.id, exc_info=True)

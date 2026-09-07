@@ -9,7 +9,7 @@ export interface Restaurant {
   currency: string;
   timezone: string;
   delivery_charge: number;
-  status: "active" | "suspended" | "onboarding" | "cancelled";
+  status: "active" | "suspended" | "onboarding" | "cancelled" | "pending_review";
   trial_ends_at: string | null;
   // Which conversation engine this business runs on -- see /home-builder, which reads
   // this to decide whether to call the legacy BotButton CRUD or the generic engine's

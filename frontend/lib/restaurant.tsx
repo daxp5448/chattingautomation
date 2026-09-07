@@ -30,6 +30,10 @@ interface RestaurantContextValue {
   // "booking" for Hotel, "inquiry" for Real Estate/Jewellery, "appointment" for Salon/
   // Gym/Clinic, "order" for Restaurant/Grocery/Electronics/Retail.
   nicheActionType: "order" | "inquiry" | "appointment" | "booking" | null;
+  // DEMO ONLY -- see app/api/v1/routers/billing.py's module docstring. Null while
+  // loading/no restaurant selected. trial_expired is computed server-side so the
+  // frontend never does its own date math against a possibly-stale clock.
+  billingStatus: { trial_ends_at: string | null; trial_expired: boolean; is_demo_billing_paid: boolean } | null;
 }
 
 const RestaurantContext = createContext<RestaurantContextValue | undefined>(undefined);
@@ -46,6 +50,7 @@ export function RestaurantProvider({ children }: { children: ReactNode }) {
   const [nicheTerminology, setNicheTerminology] = useState<Record<string, unknown> | null>(null);
   const [nicheModules, setNicheModules] = useState<Record<string, boolean> | null>(null);
   const [nicheActionType, setNicheActionType] = useState<RestaurantContextValue["nicheActionType"]>(null);
+  const [billingStatus, setBillingStatus] = useState<RestaurantContextValue["billingStatus"]>(null);
   const [refetchTick, setRefetchTick] = useState(0);
 
   useEffect(() => {
@@ -93,6 +98,18 @@ export function RestaurantProvider({ children }: { children: ReactNode }) {
       .catch(() => setEnabledFeatures(null)); // non-fatal -- null already means "unrestricted", the safe default
   }, [restaurantId, refetchTick]);
 
+  useEffect(() => {
+    if (!restaurantId) {
+      setBillingStatus(null);
+      return;
+    }
+    apiFetch<{ trial_ends_at: string | null; trial_expired: boolean; is_demo_billing_paid: boolean }>(
+      `/restaurants/${restaurantId}/billing/status`
+    )
+      .then(setBillingStatus)
+      .catch(() => setBillingStatus(null)); // non-fatal -- no banner is the safe default on a fetch failure
+  }, [restaurantId, refetchTick]);
+
   function setRestaurantId(id: string) {
     localStorage.setItem("selected_restaurant_id", id);
     setRestaurantIdState(id);
@@ -104,7 +121,17 @@ export function RestaurantProvider({ children }: { children: ReactNode }) {
 
   return (
     <RestaurantContext.Provider
-      value={{ restaurantId, setRestaurantId, enabledFeatures, refetchRestaurant, hasFeature, nicheTerminology, nicheModules, nicheActionType }}
+      value={{
+        restaurantId,
+        setRestaurantId,
+        enabledFeatures,
+        refetchRestaurant,
+        hasFeature,
+        nicheTerminology,
+        nicheModules,
+        nicheActionType,
+        billingStatus,
+      }}
     >
       {children}
     </RestaurantContext.Provider>

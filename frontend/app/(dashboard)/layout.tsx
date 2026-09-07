@@ -7,6 +7,7 @@ import { useRequireAuth } from "@/lib/auth";
 import { RestaurantProvider, useCurrentRestaurant } from "@/lib/restaurant";
 import { LogoLockup, LogoMark } from "@/components/Logo";
 import { TopBar } from "@/components/TopBar";
+import { TrialBanner } from "@/components/TrialBanner";
 import {
   type IconProps,
   IconDashboard,
@@ -205,6 +206,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </aside>
         <div className="flex flex-1 flex-col overflow-hidden">
+          <TrialBanner />
           <TopBar />
           <main className="flex-1 overflow-y-auto p-8">
             <div className="mx-auto max-w-6xl">{children}</div>

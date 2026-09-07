@@ -79,3 +79,19 @@ def generate_setup_token() -> tuple[str, str]:
     read can't be used to complete someone else's account setup."""
     raw_token = secrets.token_urlsafe(32)
     return raw_token, hash_setup_token(raw_token)
+
+
+def hash_otp(code: str) -> str:
+    """Same reasoning as hash_setup_token: a 6-digit OTP has far less entropy than a
+    32-byte token, but it's still short-lived and rate/attempt-capped (see
+    POST /signup/verify-otp), so a fast deterministic hash is fine -- brute-force
+    resistance is the attempt cap's job, not the hash's."""
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+def generate_otp() -> tuple[str, str]:
+    """Returns (raw_code, code_hash) -- a 6-digit, zero-padded, CSPRNG numeric code (not
+    random.random, which isn't safe for anything security-adjacent). The raw code is
+    handed to the caller once (to email) and never stored; only its hash is persisted."""
+    raw_code = f"{secrets.randbelow(1_000_000):06d}"
+    return raw_code, hash_otp(raw_code)

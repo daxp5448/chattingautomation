@@ -130,6 +130,9 @@ class RestaurantRead(RestaurantBase):
     razorpay_key_id: str | None
     status: RestaurantStatus
     trial_ends_at: datetime | None
+    # DEMO ONLY -- see Restaurant.is_demo_billing_paid's model docstring. Read-only here;
+    # never settable via this general PATCH schema, only by POST .../billing/demo-pay.
+    is_demo_billing_paid: bool
     # Which conversation engine this business runs on -- the frontend's /home-builder
     # page reads this to decide whether to call the legacy BotButton CRUD or the generic
     # engine's home-buttons endpoint. See app/models/restaurant.py::uses_generic_engine.

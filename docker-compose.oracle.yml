@@ -1,0 +1,47 @@
+# Override for deploying alongside other projects on the shared Oracle VM (see
+# DEPLOYMENT_ORACLE.md). Run together with the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.oracle.yml up -d --build
+#
+# Does NOT replace docker-compose.yml -- local `docker compose up --build` (no override)
+# keeps working exactly as documented in the README for anyone testing on their own
+# machine. This file only exists to remap host ports so this stack can coexist with the
+# other 4-5 projects already running on that box, following the same isolated-port
+# pattern already used for restaurent.kelviontech.in (backend 8001/frontend 3001/
+# postgres 5433) -- this project takes the next free slot in that same numbering scheme.
+#
+# IMPORTANT: these port numbers are a best guess from outside the server -- before
+# deploying, SSH in and run `docker compose ps -a` / `sudo ss -tlnp` to confirm none of
+# 5434/6380/9002/9003/8002/3002 are already taken by another project, and adjust here if
+# they are.
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5434:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6380:6379"
+
+  minio:
+    ports:
+      - "127.0.0.1:9002:9000"
+      - "127.0.0.1:9003:9001"
+
+  backend:
+    ports:
+      - "127.0.0.1:8002:8000"
+
+  frontend:
+    build:
+      args:
+        # Baked into the JS bundle at build time (Next.js NEXT_PUBLIC_* vars are NOT
+        # read at runtime) -- must be the real public URL, not localhost, or every
+        # client-side call this env var drives (see frontend/.env.local.example: the
+        # live-updates WebSocket bypasses the same-origin proxy on purpose) breaks
+        # silently in production. Change the domain here if you picked something other
+        # than whatsapp.kelviontech.in.
+        NEXT_PUBLIC_API_BASE_URL: https://whatsapp.kelviontech.in/api/v1
+    ports:
+      - "127.0.0.1:3002:3000"

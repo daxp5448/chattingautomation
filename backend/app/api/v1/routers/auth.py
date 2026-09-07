@@ -3,7 +3,6 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
-from app.core.config import settings
 from app.core.deps import CurrentUser, DbSession, OptionalCurrentUser
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, decode_token, hash_password, hash_setup_token
@@ -18,43 +17,13 @@ from app.schemas.auth import (
     UserCreate,
     UserRead,
 )
-from app.services.auth_service import authenticate, issue_tokens
+from app.services.auth_service import authenticate, issue_tokens, set_auth_cookies
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Owners may only create staff accounts under their own restaurant -- not other owners
 # or super admins, and not for a restaurant they don't belong to (enforced below).
 _OWNER_CREATABLE_ROLES = {UserRole.MANAGER, UserRole.CASHIER, UserRole.KITCHEN}
-
-# The admin panel (browser) authenticates via httpOnly cookies instead of storing tokens
-# in localStorage/JS-readable state (localStorage is trivially readable by any injected
-# script -- an httpOnly cookie is not). Non-browser API clients (pytest, smoke_test.py,
-# scripts) keep using the Authorization: Bearer header, which every response here still
-# also returns in the JSON body -- see app/core/deps.py::_resolve_token for the fallback
-# that accepts either. `secure` is only enforced in production because local dev runs
-# over plain http, where a Secure cookie would silently never be sent by the browser.
-_COOKIE_SECURE = settings.ENVIRONMENT == "production"
-
-
-def _set_auth_cookies(response: Response, tokens: TokenResponse) -> None:
-    response.set_cookie(
-        "access_token",
-        tokens.access_token,
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        httponly=True,
-        secure=_COOKIE_SECURE,
-        samesite="lax",
-        path="/",
-    )
-    response.set_cookie(
-        "refresh_token",
-        tokens.refresh_token,
-        max_age=settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
-        httponly=True,
-        secure=_COOKIE_SECURE,
-        samesite="lax",
-        path="/",
-    )
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -114,7 +83,7 @@ async def login(request: Request, response: Response, payload: LoginRequest, db:
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     tokens = issue_tokens(user)
-    _set_auth_cookies(response, tokens)
+    set_auth_cookies(response, tokens)
     return tokens
 
 
@@ -140,7 +109,7 @@ async def refresh(request: Request, response: Response, db: DbSession, payload: 
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
     tokens = issue_tokens(user)
-    _set_auth_cookies(response, tokens)
+    set_auth_cookies(response, tokens)
     return tokens
 
 

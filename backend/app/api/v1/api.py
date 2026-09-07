@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.routers import (
     api_endpoints,
     auth,
+    billing,
     bot_config,
     branches,
     broadcasts,
@@ -29,6 +30,7 @@ from app.api.v1.routers import (
     orders,
     payments,
     restaurants,
+    signup,
     webhook,
     whatsapp_flow,
     whatsapp_templates,
@@ -37,7 +39,9 @@ from app.api.v1.routers import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+api_router.include_router(signup.router)
 api_router.include_router(restaurants.router)
+api_router.include_router(billing.router)
 api_router.include_router(branches.router)
 api_router.include_router(menu.router)
 api_router.include_router(catalog.router)

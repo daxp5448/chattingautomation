@@ -117,8 +117,16 @@ class Restaurant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Informational only -- nothing automatically suspends a restaurant when this date
     # passes (subscription billing here is a manual super_admin action, see
     # app/api/v1/routers/restaurants.py::update_restaurant). This is just so "who's
-    # coming due" is visible instead of tracked in someone's head or a spreadsheet.
+    # coming due" is visible instead of tracked in someone's head or a spreadsheet. Set
+    # automatically to signup time + 7 days for self-serve businesses (see
+    # app/api/v1/routers/signup.py), still manually adjustable by a super_admin afterward.
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # DEMO ONLY -- no real payment gateway is involved (see
+    # app/api/v1/routers/billing.py's docstring). True once the owner clicks "Pay Now" on
+    # the demo paywall after their trial ends. Not read by webhook gating, dashboard
+    # blocking, or anything else in the platform -- exists purely so the frontend banner
+    # can show "paid" instead of re-prompting after a demo payment.
+    is_demo_billing_paid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # --- Generic multi-niche platform ------------------------------------------------
     # The single switch app/api/v1/routers/webhook.py checks to decide which engine

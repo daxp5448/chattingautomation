@@ -20,11 +20,14 @@ from app.services.whatsapp_client import GraphAPIWhatsAppSender
 from app.services.whatsapp_flow_crypto import FlowDecryptionError, decrypt_request, encrypt_response
 from app.services.whatsapp_flow_order_service import handle_data_exchange
 
-# A restaurant in either of these states doesn't take orders -- see
+# A restaurant in any of these states doesn't take orders -- see
 # app/models/enums.py::RestaurantStatus for what each one means. ONBOARDING is
-# deliberately not in this set: a restaurant being configured for the first time can
-# still receive real test messages before its owner flips it to ACTIVE.
-_BLOCKED_STATUSES = {RestaurantStatus.SUSPENDED, RestaurantStatus.CANCELLED}
+# deliberately not in this set: a restaurant being configured for the first time by an
+# admin can still receive real test messages before its owner flips it to ACTIVE.
+# PENDING_REVIEW IS included, unlike ONBOARDING: a stranger who just signed up through
+# POST /signup must not be able to send/receive real WhatsApp messages before a Super
+# Admin has reviewed the business, even though their dashboard is otherwise fully usable.
+_BLOCKED_STATUSES = {RestaurantStatus.SUSPENDED, RestaurantStatus.CANCELLED, RestaurantStatus.PENDING_REVIEW}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhook", tags=["webhook"])

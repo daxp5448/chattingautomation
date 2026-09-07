@@ -19,6 +19,7 @@ const STATUS_STYLES: Record<string, string> = {
   onboarding: "bg-blue-100 text-blue-700",
   suspended: "bg-amber-100 text-amber-700",
   cancelled: "bg-slate-200 text-slate-600",
+  pending_review: "bg-purple-100 text-purple-700",
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -114,6 +115,10 @@ const STATUS_ACTIONS: Record<string, { to: "active" | "suspended" | "cancelled";
   ],
   cancelled: [
     { to: "active", label: "Reactivate", confirm: "Reactivate this cancelled business? Its WhatsApp bot will start taking orders again immediately.", style: "bg-emerald-600 text-white hover:bg-emerald-700" },
+  ],
+  pending_review: [
+    { to: "active", label: "Approve", confirm: "Approve this business? Its WhatsApp bot will start taking real orders immediately. Its dashboard is already fully set up.", style: "bg-emerald-600 text-white hover:bg-emerald-700" },
+    { to: "cancelled", label: "Reject", confirm: "Reject this signup? Its WhatsApp bot will never go live unless you approve it later. Nothing is deleted.", style: "border border-red-300 text-red-700 hover:bg-red-50" },
   ],
 };
 
@@ -884,6 +889,7 @@ export default function RestaurantsPage() {
   const { user } = useAuth();
   const { restaurantId, setRestaurantId } = useCurrentRestaurant();
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"all" | Restaurant["status"]>("all");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -1063,6 +1069,36 @@ export default function RestaurantsPage() {
         </form>
       )}
 
+      {isSuperAdmin && restaurants.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {(
+            [
+              { key: "all" as const, label: "All" },
+              { key: "pending_review" as const, label: "Pending Approval" },
+              { key: "active" as const, label: "Active" },
+              { key: "suspended" as const, label: "Suspended" },
+              { key: "cancelled" as const, label: "Cancelled" },
+            ]
+          ).map((tab) => {
+            const count = tab.key === "all" ? restaurants.length : restaurants.filter((r) => r.status === tab.key).length;
+            if (tab.key !== "all" && count === 0) return null;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setStatusFilter(tab.key)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  statusFilter === tab.key
+                    ? "bg-primary text-white"
+                    : "border border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {tab.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-slate-500">Loading...</p>
       ) : (
@@ -1079,7 +1115,7 @@ export default function RestaurantsPage() {
               </tr>
             </thead>
             <tbody>
-              {restaurants.map((r) => (
+              {restaurants.filter((r) => statusFilter === "all" || r.status === statusFilter).map((r) => (
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                   <td className="px-4 py-3 font-medium text-slate-800">
                     {r.name}
@@ -1143,10 +1179,10 @@ export default function RestaurantsPage() {
                   </td>
                 </tr>
               ))}
-              {restaurants.length === 0 && (
+              {restaurants.filter((r) => statusFilter === "all" || r.status === statusFilter).length === 0 && (
                 <tr>
                   <td colSpan={isSuperAdmin ? 6 : 5} className="px-4 py-6 text-center text-slate-400">
-                    No businesses yet.
+                    {restaurants.length === 0 ? "No businesses yet." : "No businesses match this filter."}
                   </td>
                 </tr>
               )}

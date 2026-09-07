@@ -19,8 +19,10 @@ from app.models.generic_conversation_state import GenericConversationState
 from app.models.image import Image
 from app.models.image_type_profile import ImageTypeProfile
 from app.models.invoice_counter import RestaurantInvoiceCounter
+from app.models.jewellery_design import JewelleryDesign
 from app.models.loyalty import LoyaltyTransaction
 from app.models.message import Message
+from app.models.meta_media_cache import MetaMediaCache
 from app.models.niche_template import NicheTemplate
 from app.models.order import Order, OrderItem
 from app.models.product import Addon, Product, product_addon, product_branch
@@ -55,8 +57,10 @@ __all__ = [
     "GenericConversationState",
     "Image",
     "ImageTypeProfile",
+    "JewelleryDesign",
     "LoyaltyTransaction",
     "Message",
+    "MetaMediaCache",
     "NicheTemplate",
     "Order",
     "OrderItem",

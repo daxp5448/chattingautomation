@@ -22,6 +22,15 @@ class RestaurantStatus(str, enum.Enum):
     # future data-retention/export job has something unambiguous to key off. There is no
     # DELETE /restaurants endpoint -- cancelling never destroys data.
     CANCELLED = "cancelled"
+    # A restaurant created through the public self-serve /signup flow, before a Super
+    # Admin has approved it. Unlike ONBOARDING (which deliberately allows real bot traffic
+    # during admin-driven setup -- see that status's usage in webhook.py), a self-serve
+    # signup must not take real customer messages until a human has reviewed it, so this
+    # status IS in webhook.py's _BLOCKED_STATUSES. The dashboard itself is fully usable in
+    # this state (branches, menu, coupons, WhatsApp credentials can all be configured);
+    # only the webhook's bot response is gated. Approving (PATCH status -> active) is the
+    # only transition out.
+    PENDING_REVIEW = "pending_review"
 
 
 class BranchStatus(str, enum.Enum):
