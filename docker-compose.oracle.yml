@@ -23,23 +23,33 @@
 # jamanvar's .env comment). postgres/redis/minio stay loopback-only -- nothing outside
 # this project's own containers (which reach them by Compose service name on their
 # shared internal network) ever needs to reach them.
+#
+# `!override` on every `ports:` key below is required -- Compose's DEFAULT behavior for
+# a list-typed key (ports, volumes, etc.) across -f files is to CONCATENATE the base
+# file's list with this one, not replace it. Without this tag, both the base file's
+# default ports (8000, 3000, 5432, 6379, 9000-9001) AND these remapped ones end up
+# published simultaneously -- silently putting the backend/frontend directly on the
+# public internet with no nginx/SSL in front, since those two bind 0.0.0.0 in the base
+# file. Caught live: `docker compose ps` showed both 0.0.0.0:8000 and 0.0.0.0:8002 after
+# the first `make up` here. `!override` makes this file's list fully REPLACE the base
+# file's for that service instead of appending to it.
 
 services:
   postgres:
-    ports:
+    ports: !override
       - "127.0.0.1:5434:5432"
 
   redis:
-    ports:
+    ports: !override
       - "127.0.0.1:6380:6379"
 
   minio:
-    ports:
+    ports: !override
       - "127.0.0.1:9002:9000"
       - "127.0.0.1:9003:9001"
 
   backend:
-    ports:
+    ports: !override
       - "8002:8000"
 
   frontend:
@@ -52,5 +62,5 @@ services:
         # silently in production. Change the domain here if you picked something other
         # than whatsapp.kelviontech.in.
         NEXT_PUBLIC_API_BASE_URL: https://whatsapp.kelviontech.in/api/v1
-    ports:
+    ports: !override
       - "3004:3000"
