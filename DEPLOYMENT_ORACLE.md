@@ -127,12 +127,28 @@ make nginx-install
 curl -I https://whatsapp.kelviontech.in/    # expect 200, and 301 on the plain-HTTP version
 ```
 
-### 8. Seed the database
+### 8. Seed the niche templates, then create your real super admin
+
 ```bash
 make seed
 ```
-Log in at `https://whatsapp.kelviontech.in` with the seeded super admin
-(`admin@kelviontech.dev` / `ChangeMe123!`) — **change that password immediately**.
+This only seeds the 12 niche templates. `app.seed` (the demo-restaurant-plus-super-admin
+script) deliberately refuses to run against `ENVIRONMENT=production` — it creates a login
+with a publicly-known default password (`admin@kelviontech.dev` / `ChangeMe123!`), which
+would otherwise be sitting on a live, internet-reachable deployment.
+
+Instead, create your real super admin directly through the API's one-time bootstrap path
+(unauthenticated registration is only allowed when the database has zero users — the very
+first account on a fresh deployment, see `backend/app/api/v1/routers/auth.py::register`):
+
+```bash
+curl -X POST https://whatsapp.kelviontech.in/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "<your real email>", "password": "<a real strong password>", "role": "super_admin"}'
+```
+
+Pick your own email/password for this one — don't share them in chat, this is a real
+production login. Then log in at `https://whatsapp.kelviontech.in` with it.
 
 ### 9. Point Meta at this domain instead of ngrok
 In the Meta App dashboard (**WhatsApp → Configuration**):

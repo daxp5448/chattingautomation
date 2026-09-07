@@ -60,8 +60,11 @@ nginx-install:
 	docker exec $(NGINX_CONTAINER) nginx -s reload
 	@echo "Live at https://$(DOMAIN)"
 
+# app.seed deliberately refuses to run with ENVIRONMENT=production (see app/seed.py) --
+# it creates a super admin with a publicly-known default password. Only the niche
+# template data (no credentials involved) is safe to seed this way in production; create
+# your real super admin separately via POST /auth/register -- see DEPLOYMENT_ORACLE.md.
 seed:
-	$(COMPOSE) exec backend python -m app.seed
 	$(COMPOSE) exec backend python -m app.scripts.seed_niche_templates
 
 check:
