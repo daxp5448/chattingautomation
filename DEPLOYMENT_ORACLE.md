@@ -45,12 +45,12 @@ Checked directly against the live VM:
 | `3002` | `jamanvar.kelviontech.in` |
 | `5433` | restaurant's own Postgres |
 
-This project takes the next free slot — **`3003`** (frontend), **`8002`** (backend),
+This project takes the next free slot — **`3004`** (frontend), **`8002`** (backend),
 **`5434`** (postgres), **`6380`** (redis), **`9002`**/**`9003`** (minio) — already set in
 `docker-compose.oracle.yml`. **Re-verify before deploying**, the same way the real
 session that surfaced the `3002` conflict did:
 ```bash
-sudo ss -ltnp | grep -E ':(3003|8002|5434|6380|9002|9003)\b'
+sudo ss -ltnp | grep -E ':(3004|8002|5434|6380|9002|9003)\b'
 ```
 Empty output means all clear. If anything's taken, edit the host-side port number (left
 side of each `"host:container"` pair) in `docker-compose.oracle.yml`, and the matching

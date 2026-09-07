@@ -66,5 +66,5 @@ seed:
 
 check:
 	curl -sf http://127.0.0.1:8002/health && echo "backend: ok"
-	curl -sfI http://127.0.0.1:3003 > /dev/null && echo "frontend: ok"
+	curl -sfI http://127.0.0.1:3004 > /dev/null && echo "frontend: ok"
 	docker exec $(NGINX_CONTAINER) wget -qO- http://172.17.0.1:8002/health && echo "backend reachable from nginx container: ok"
