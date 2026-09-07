@@ -1,19 +1,28 @@
-# Override for deploying alongside other projects on the shared Oracle VM (see
+# Override for deploying alongside your other projects on the shared Oracle VM (see
 # DEPLOYMENT_ORACLE.md). Run together with the base file:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.oracle.yml up -d --build
 #
 # Does NOT replace docker-compose.yml -- local `docker compose up --build` (no override)
 # keeps working exactly as documented in the README for anyone testing on their own
-# machine. This file only exists to remap host ports so this stack can coexist with the
-# other 4-5 projects already running on that box, following the same isolated-port
-# pattern already used for restaurent.kelviontech.in (backend 8001/frontend 3001/
-# postgres 5433) -- this project takes the next free slot in that same numbering scheme.
+# machine.
 #
-# IMPORTANT: these port numbers are a best guess from outside the server -- before
-# deploying, SSH in and run `docker compose ps -a` / `sudo ss -tlnp` to confirm none of
-# 5434/6380/9002/9003/8002/3002 are already taken by another project, and adjust here if
-# they are.
+# Port choices, confirmed against the live VM (see Deployment-context.txt):
+#   3001 / 8001  -- already used by restaurant.kelviontech.in
+#   3002         -- already used by jamanvar.kelviontech.in
+#   5433         -- already used by restaurant's own Postgres
+# This project takes the next free slot: 3003 (frontend) / 8002 (backend) / 5434
+# (postgres) / 6380 (redis) / 9002+9003 (minio). RE-VERIFY before deploying --
+# `sudo ss -ltnp | grep -E ':(3003|8002|5434|6380|9002|9003)\b'` should print nothing.
+#
+# backend/frontend publish on 0.0.0.0 (not 127.0.0.1) DELIBERATELY: the shared nginx
+# container reaches every project through the Docker bridge gateway (172.17.0.1), which
+# is a different interface than loopback -- a socket bound only to 127.0.0.1 is
+# unreachable from that gateway address even though both are "the same host". This
+# matches how restaurant/jamanvar already do it (see their own nginx vhosts, and
+# jamanvar's .env comment). postgres/redis/minio stay loopback-only -- nothing outside
+# this project's own containers (which reach them by Compose service name on their
+# shared internal network) ever needs to reach them.
 
 services:
   postgres:
@@ -31,7 +40,7 @@ services:
 
   backend:
     ports:
-      - "127.0.0.1:8002:8000"
+      - "8002:8000"
 
   frontend:
     build:
@@ -44,4 +53,4 @@ services:
         # than whatsapp.kelviontech.in.
         NEXT_PUBLIC_API_BASE_URL: https://whatsapp.kelviontech.in/api/v1
     ports:
-      - "127.0.0.1:3002:3000"
+      - "3003:3000"

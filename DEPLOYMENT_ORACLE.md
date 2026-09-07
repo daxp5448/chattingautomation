@@ -1,50 +1,73 @@
 # Deploying to `whatsapp.kelviontech.in` on Your Existing Oracle VM
 
-This puts the WhatsApp Business OS platform on the same Oracle Cloud Always Free VM
-already running your other 4-5 projects, as its own subdomain — following the exact
-pattern documented in `Resources/Personal/DEPLOYMENT_ORACLE_SUBDOMAIN_GUIDE.md` for
-`restaurent.kelviontech.in`. Once this is live, it **replaces ngrok entirely** — Meta's
-webhook points straight at this domain, permanently, with no rotating URL to re-paste
-after every restart (see `GOING_LIVE_LOCAL_TESTING.md` for why ngrok was needed at all).
+Puts the WhatsApp Business OS platform on the same Oracle Cloud VM already running your
+other projects, as its own subdomain. Once this is live, it **replaces ngrok entirely** —
+Meta's webhook points at this domain permanently, no rotating URL to re-paste after every
+restart (see `GOING_LIVE_LOCAL_TESTING.md` for why ngrok was needed for local testing at
+all).
 
-This file only covers what's specific to *this* project. General Oracle/Docker/nginx
-concepts (dual firewall, `make` targets, certbot renewal) are already explained in your
-existing four guides — this doesn't repeat them.
+This has been corrected against the **actual live state of the VM** (confirmed by SSHing
+in and inspecting it directly — see `Deployment-context.txt`), not just the general
+pattern described in your four `DEPLOYMENT*`/`PROJECT_OVERVIEW*` docs. Two things those
+docs don't tell you, learned from the real server:
+
+1. **nginx is dockerized, not host-level.** It runs as a container
+   (`kelviontech-nginx-1`, part of the main `KelvionTech` project's compose stack), with
+   its config directory bind-mounted from `/home/ubuntu/KelvionTech/nginx/conf.d/` on the
+   host. There is no `/etc/nginx/sites-available` to `sudo cp` into — you edit files in
+   the `KelvionTech` repo's checkout on the VM instead.
+2. **It reaches every other project through the Docker bridge gateway
+   (`172.17.0.1:<host-port>`)**, not `127.0.0.1` or a shared Docker network — each project
+   is its own separate `docker compose` stack. This is why every port this project
+   publishes to the host must bind to `0.0.0.0`, not `127.0.0.1` (a loopback-only bind is
+   invisible from that gateway address, even though both are "the same machine").
 
 ## What's already prepared in this repo
 
-- **`docker-compose.oracle.yml`** — an override file that remaps this stack's ports so it
-  doesn't collide with your other projects (following the same numbering the restaurant
-  app used: 8001/3001/5433 → this one takes 8002/3002/5434, plus 6380 for redis and
-  9002/9003 for minio). It does **not** touch `docker-compose.yml` — local
-  `docker compose up --build` for anyone testing on their own machine is unaffected.
-- **`nginx/whatsapp.kelviontech.in.conf`** — the vhost config, routing `/api/*` and the
-  WebSocket path to the backend, everything else to the frontend.
+- **`docker-compose.oracle.yml`** — port-remap override, run alongside the base compose
+  file. Doesn't touch `docker-compose.yml` itself, so local `docker compose up --build`
+  for anyone testing on their own machine is unaffected.
+- **`nginx/whatsapp.kelviontech.in.bootstrap.conf`** — a temporary HTTP-only vhost,
+  installed first (before a certificate exists).
+- **`nginx/whatsapp.kelviontech.in.conf`** — the final HTTP-redirect + HTTPS vhost,
+  installed after the certificate is issued.
+- **`Makefile`** — wraps the whole sequence (`nginx-bootstrap` → `ssl` → `nginx-install`),
+  mirroring the exact steps already proven working for `jamanvar.kelviontech.in` and
+  `restaurant.kelviontech.in` on this VM.
 
-**Before you deploy**: SSH into the VM and check those port numbers are actually free —
+## Ports — confirmed, not guessed
+
+Checked directly against the live VM:
+
+| Port | Already used by |
+|---|---|
+| `3001` / `8001` | `restaurant.kelviontech.in` |
+| `3002` | `jamanvar.kelviontech.in` |
+| `5433` | restaurant's own Postgres |
+
+This project takes the next free slot — **`3003`** (frontend), **`8002`** (backend),
+**`5434`** (postgres), **`6380`** (redis), **`9002`**/**`9003`** (minio) — already set in
+`docker-compose.oracle.yml`. **Re-verify before deploying**, the same way the real
+session that surfaced the `3002` conflict did:
 ```bash
-docker compose ps -a          # in each existing project's directory
-sudo ss -tlnp | grep LISTEN
+sudo ss -ltnp | grep -E ':(3003|8002|5434|6380|9002|9003)\b'
 ```
-If any of `5434`/`6380`/`9002`/`9003`/`8002`/`3002` are taken, edit the port numbers in
-`docker-compose.oracle.yml` (left side of each `"host:container"` pair only — never touch
-the container-side number) and the two upstream ports in the nginx config to match.
+Empty output means all clear. If anything's taken, edit the host-side port number (left
+side of each `"host:container"` pair) in `docker-compose.oracle.yml`, and the matching
+`172.17.0.1:<port>` references in both nginx conf files, to match.
 
 ## Steps
 
 ### 1. DNS
-At your registrar (wherever `kelviontech.in` is managed): add an **A record**.
-
-| Host | Type | Value |
-|---|---|---|
-| `whatsapp` | A | `<YOUR_ORACLE_VM_PUBLIC_IP>` |
+At your registrar: add an **A record** — Host `whatsapp`, Type `A`, Value your VM's public IP.
 
 ### 2. Get the code onto the VM
 ```bash
-ssh -i /path/to/oracle_key.pem ubuntu@<YOUR_PUBLIC_IP>
+ssh kelvion   # or: ssh -i /path/to/oracle_key.pem ubuntu@<PUBLIC_IP>
 cd /home/ubuntu
-git clone <YOUR_WHATSAPP_GITHUB_REPO_URL> whatsapp-app
-cd whatsapp-app
+git clone git@github.com:<you>/whatsapp.git whatsapp-app   # use the already-authorized
+cd whatsapp-app                                             # github_deploy key, same as
+                                                              # every other project here
 ```
 
 ### 3. Production `.env`
@@ -52,7 +75,7 @@ cd whatsapp-app
 cp .env.example .env
 nano .env
 ```
-Generate fresh secrets — **never reuse the values from your local `backend/.env`**:
+Generate fresh secrets — **never reuse your local `backend/.env` values**:
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(24))"   # -> POSTGRES_PASSWORD
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"   # -> JWT_SECRET_KEY
@@ -64,7 +87,7 @@ ENVIRONMENT=production
 POSTGRES_PASSWORD=<generated>
 JWT_SECRET_KEY=<generated>
 FIELD_ENCRYPTION_KEY=<generated>
-WHATSAPP_WEBHOOK_VERIFY_TOKEN=<pick a real secret string, not the local "change-me-verify-token">
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=<pick a real secret string>
 CORS_ORIGINS=["https://whatsapp.kelviontech.in"]
 FRONTEND_URL=https://whatsapp.kelviontech.in
 PUBLIC_API_BASE_URL=https://whatsapp.kelviontech.in/api/v1
@@ -74,71 +97,81 @@ S3_SECRET_KEY=<generated>
 MINIO_ROOT_USER=<same as S3_ACCESS_KEY>
 MINIO_ROOT_PASSWORD=<same as S3_SECRET_KEY>
 ```
-`WHATSAPP_APP_SECRET` — leave blank for now; you'll paste this in once you're in the Meta
-App dashboard (see §6). `ENVIRONMENT=production` means the backend **fails closed** on an
-unsigned webhook until you do — no accidental "unsafe unsigned" fallback like local dev
-gets (see `GOING_LIVE_LOCAL_TESTING.md` §6).
+Leave `WHATSAPP_APP_SECRET` blank for now — pasted in during step 8. With
+`ENVIRONMENT=production`, the backend **fails closed** on an unsigned webhook until you
+set it (no unsafe dev fallback — see `GOING_LIVE_LOCAL_TESTING.md` §6).
 
-### 4. Launch
+### 4. Bring the stack up
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.oracle.yml up -d --build
-docker compose -f docker-compose.yml -f docker-compose.oracle.yml ps
-curl http://127.0.0.1:8002/health   # expect {"status":"ok"}
+make up
+make ps          # all containers healthy?
+make check        # backend/frontend reachable directly AND across the bridge gateway
 ```
-The backend's own `command:` already runs `alembic upgrade head` on boot — no separate
-migration step needed.
 
-### 5. nginx + SSL
+### 5. Bootstrap nginx (HTTP only, before the cert exists)
 ```bash
-sudo cp nginx/whatsapp.kelviontech.in.conf /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/whatsapp.kelviontech.in.conf /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-
-sudo certbot --nginx -d whatsapp.kelviontech.in
-sudo systemctl reload nginx
+make nginx-bootstrap
+curl -I http://whatsapp.kelviontech.in/    # expect 200
 ```
-Visit `https://whatsapp.kelviontech.in` — you should see the login page.
 
-### 6. Seed + first login
+### 6. Issue the certificate
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.oracle.yml exec backend python -m app.seed
-docker compose -f docker-compose.yml -f docker-compose.oracle.yml exec backend python -m app.scripts.seed_niche_templates
+make ssl
+```
+Watch for `Successfully received certificate.` If it hangs, you likely forgot step 5 (the
+ACME challenge path has to be reachable over plain HTTP first) — `Ctrl+C` and re-check.
+
+### 7. Install the real HTTPS vhost
+```bash
+make nginx-install
+curl -I https://whatsapp.kelviontech.in/    # expect 200, and 301 on the plain-HTTP version
+```
+
+### 8. Seed the database
+```bash
+make seed
 ```
 Log in at `https://whatsapp.kelviontech.in` with the seeded super admin
-(`admin@kelviontech.dev` / `ChangeMe123!`) — **change that password immediately** from the
-dashboard, same rule as your other projects.
+(`admin@kelviontech.dev` / `ChangeMe123!`) — **change that password immediately**.
 
-### 7. Point Meta at this domain instead of ngrok
-This is the whole payoff. In the Meta App dashboard (**WhatsApp → Configuration**):
+### 9. Point Meta at this domain instead of ngrok
+In the Meta App dashboard (**WhatsApp → Configuration**):
 - **Callback URL**: `https://whatsapp.kelviontech.in/api/v1/webhook`
-- **Verify Token**: the `WHATSAPP_WEBHOOK_VERIFY_TOKEN` you set in step 3
-- **Verify and Save**, then **Subscribe** to `messages` under Webhook fields
+- **Verify Token**: the `WHATSAPP_WEBHOOK_VERIFY_TOKEN` from step 3
+- **Verify and Save**, then **Subscribe** to `messages`
 
-Copy the real **App Secret** from **App Settings → Basic** into `.env`'s
-`WHATSAPP_APP_SECRET`, then:
+Copy the real **App Secret** (App Settings → Basic) into `.env`'s `WHATSAPP_APP_SECRET`,
+then:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.oracle.yml restart backend
+make restart
 ```
-From here the rest of `GOING_LIVE_LOCAL_TESTING.md` §8 (connecting a business's Phone
-Number ID/Access Token from the dashboard, sending "hi") applies exactly the same —
-you're just doing it against a permanent URL instead of ngrok.
+From here, `GOING_LIVE_LOCAL_TESTING.md` §8 (connecting a business's Phone Number
+ID/Access Token from the dashboard, sending "hi") applies exactly the same — just against
+a permanent URL instead of ngrok.
 
 ## Day-to-day
 
-Same `make`-style workflow as your other projects, just always pass both compose files:
 ```bash
 git pull
-docker compose -f docker-compose.yml -f docker-compose.oracle.yml up -d --build   # ship a change
-docker compose -f docker-compose.yml -f docker-compose.oracle.yml logs -f backend  # tail logs
+make up            # ship a code change
+make logs-backend  # tail logs
+make restart       # after an .env-only change, no rebuild needed
 ```
-If you want a `Makefile` wrapping these (matching your other two projects' `make deploy`/
-`make logs`/`make check` convenience), that's a small addition worth doing once this is
-confirmed working — not included here to keep this first pass minimal and verifiable.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `make ssl` hangs / times out | Bootstrap vhost (step 5) wasn't installed first, or DNS hasn't propagated yet — `dig +short whatsapp.kelviontech.in` should return your VM's IP |
+| `nginx -t` fails during `nginx-install` | Certificate wasn't actually issued — check `make ssl`'s output for `Successfully received certificate` |
+| 200 on port 8002 directly but nginx returns a gateway error | Backend/frontend bound to `127.0.0.1` instead of `0.0.0.0` — check `docker-compose.oracle.yml`'s port lines have no `127.0.0.1:` prefix for backend/frontend (postgres/redis/minio SHOULD keep it) |
+| Everything works over HTTP but not HTTPS | `make nginx-install` wasn't run, or ran before `make ssl` finished |
 
 ## What's deliberately not covered here
 
-- **Backups** — `GOING_LIVE.md` §6 already documents `backend/scripts/backup_db.sh` and a
-  cron entry; wire it up the same way you did for your other Postgres-backed projects.
-- **Multiple backend workers/replicas** — same caveat as your other projects' `DEPLOYMENT.md`:
-  the rate limiter and the WebSocket `ConnectionManager` both keep state in process memory,
-  so don't scale this past one backend container without moving that state to Redis first.
+- **Backups** — `GOING_LIVE.md` §6 already documents `backend/scripts/backup_db.sh`; wire
+  it into cron the same way as your other Postgres-backed projects.
+- **Multiple backend workers/replicas** — the rate limiter and the WebSocket
+  `ConnectionManager` both keep state in process memory; don't scale past one backend
+  container without moving that state to Redis first (same caveat noted in your other
+  projects' `DEPLOYMENT.md`).
