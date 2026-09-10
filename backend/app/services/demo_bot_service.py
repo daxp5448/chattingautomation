@@ -20,8 +20,10 @@ import re
 
 from sqlalchemy import select
 
+from app.models.customer import Customer
 from app.models.demo_session import DemoSession
 from app.models.enums import MessageDirection, MessageSender
+from app.models.flow_definition import FlowDefinition
 from app.models.message import Message
 from app.models.niche_template import NicheTemplate
 from app.models.restaurant import Restaurant
@@ -204,7 +206,9 @@ async def _send_industry_picker(session, sender: WhatsAppSender, sentinel_restau
     )
 
 
-async def _customer_is_at_a_terminal_step(session, demo_restaurant: Restaurant, from_phone: str) -> bool:
+async def _customer_is_at_a_terminal_step(
+    session, demo_restaurant: Restaurant, from_phone: str
+) -> tuple[bool, Customer, FlowDefinition | None]:
     """True once this customer's conversation with this niche has reached a step marked
     `terminal: True` (order placed / enquiry submitted / booking confirmed / etc, per
     each niche's own default_flow_steps -- see generic_flow_engine.py's _render_step,
@@ -212,16 +216,25 @@ async def _customer_is_at_a_terminal_step(session, demo_restaurant: Restaurant, 
     the row-locked fetch process_inbound_message itself uses), since this only decides
     whether to show the demo-only "what next?" offer BEFORE delegating into the real
     engine for this turn -- never mutates anything.
+
+    Also returns the Customer and FlowDefinition rows it had to fetch to answer the
+    question, so the caller can pass them straight into process_inbound_message's own
+    optional `customer`/`flow_def` params on the same turn instead of re-fetching
+    byte-for-byte identical rows a second time (see that function's own docstring for why
+    this is safe: neither row is lock-sensitive, and nothing writes to either between
+    this read and that later one). The ConversationState this function reads is
+    deliberately NOT returned/reused anywhere -- process_inbound_message must always
+    acquire its own fresh, row-locked read of that one.
     """
     customer = await CustomerRepository(session).get_or_create(demo_restaurant.id, from_phone)
     state = await GenericConversationStateRepository(session).get_by_customer(customer.id, demo_restaurant.id)
     if state is None:
-        return False
+        return False, customer, None
     flow_def = await FlowDefinitionRepository(session).get_by_restaurant(demo_restaurant.id)
     if flow_def is None:
-        return False
+        return False, customer, None
     step = next((s for s in flow_def.steps if s.get("step_id") == state.current_step), None)
-    return bool(step and step.get("terminal"))
+    return bool(step and step.get("terminal")), customer, flow_def
 
 
 async def _send_terminal_step_offer(session, sender: WhatsAppSender, sentinel_restaurant: Restaurant, display_name: str, customer_id, from_phone: str) -> None:
@@ -384,7 +397,8 @@ async def handle_demo_inbound(
         )
         return
 
-    if await _customer_is_at_a_terminal_step(session, demo_restaurant, from_phone):
+    is_terminal, demo_customer, demo_flow_def = await _customer_is_at_a_terminal_step(session, demo_restaurant, from_phone)
+    if is_terminal:
         # This niche's conversation already finished (order placed / enquiry submitted /
         # etc) -- explicitly ASK what's next instead of silently falling through to the
         # real engine's own "any message after a terminal step resets to welcome"
@@ -419,5 +433,11 @@ async def handle_demo_inbound(
     # Already mid-demo, not a leave signal, not at a terminal step, not a greeting --
     # delegate straight into the real engine, completely unmodified. It does its own
     # inbound Message logging (scoped to this niche's own demo restaurant/customer) and
-    # its own wa_message_id dedup check.
-    await process_inbound_message(session, sender, demo_restaurant, from_phone, interaction, wa_message_id)
+    # its own wa_message_id dedup check. `customer`/`flow_def` reuse the rows
+    # _customer_is_at_a_terminal_step just fetched above (same restaurant/phone scope,
+    # nothing wrote to either in between) instead of re-querying them a second time --
+    # see process_inbound_message's own docstring for why this is safe.
+    await process_inbound_message(
+        session, sender, demo_restaurant, from_phone, interaction, wa_message_id,
+        customer=demo_customer, flow_def=demo_flow_def,
+    )

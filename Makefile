@@ -17,8 +17,13 @@ up: ## Build and start this project's stack (isolated ports, see docker-compose.
 down:
 	$(COMPOSE) down
 
+# Deliberately `up -d`, NOT `docker compose restart` -- `restart` reuses each container's
+# existing environment as it was at creation time and never re-reads .env, so an edited
+# secret (e.g. WHATSAPP_APP_SECRET, per DEPLOYMENT_ORACLE.md step 9) would silently keep
+# using its old value. `up -d` recreates any service whose config (including env) has
+# changed, with no image rebuild needed for a plain .env edit.
 restart:
-	$(COMPOSE) restart
+	$(COMPOSE) up -d
 
 ps:
 	$(COMPOSE) ps

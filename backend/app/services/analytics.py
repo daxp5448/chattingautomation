@@ -33,6 +33,11 @@ LEAD_STARTED = "LEAD_STARTED"
 LEAD_COMPLETED = "LEAD_COMPLETED"
 HUMAN_HANDOFF = "HUMAN_HANDOFF"
 FLOW_COMPLETED = "FLOW_COMPLETED"
+# Fired when generic_flow_engine.py's conservative rule-based safety layer (see
+# conversational_safety.py) refuses a free-text message -- lets a business owner see
+# whether/how often this fires without ever logging the customer's own message text
+# here (see `details` at the one call site: only the matched category, never the text).
+SAFETY_REFUSAL = "SAFETY_REFUSAL"
 
 
 def record_event(

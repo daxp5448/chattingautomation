@@ -18,6 +18,7 @@ from typing import Any
 from rapidfuzz import fuzz
 
 from app.services import conversation_lexicon as lex
+from app.services import conversational_safety
 
 _NON_WORD = re.compile(r"[^a-z0-9\s]")
 
@@ -28,6 +29,12 @@ class ResolvedInteraction:
     signal: str | None = None  # "back" | "restart" | "change_qty" | "show_more" | "cheaper"
     ambiguous_candidates: list[dict[str, Any]] | None = None
     is_bot_query: bool = False
+    # See conversational_safety.py::UnsafeCategory -- set only for free text a
+    # conservative rule-based check confidently classifies as unsafe (profanity, sexual,
+    # threat, prompt injection/credential request, other-customer-data request, illegal/
+    # dangerous request). None means "not confidently classified," which is NOT the same
+    # as "definitely safe" -- it just means the caller's normal fallback handling applies.
+    unsafe_category: str | None = None
 
     @property
     def is_noop(self) -> bool:
@@ -36,6 +43,7 @@ class ResolvedInteraction:
             and self.signal is None
             and self.ambiguous_candidates is None
             and not self.is_bot_query
+            and self.unsafe_category is None
         )
 
 
@@ -65,6 +73,15 @@ def resolve_interaction(
     normalized = _normalize(interaction.text)
     if not normalized:
         return ResolvedInteraction()
+
+    # Checked before every other free-text interpretation, including "are you a bot?" --
+    # setting a boundary takes priority over any other reading of the message. See
+    # conversational_safety.py's own module docstring for why this is a narrow,
+    # conservative check that prefers under-detection (falling through to the normal
+    # unmatched-input handling) over any risk of blocking a legitimate customer query.
+    safety = conversational_safety.classify(normalized)
+    if safety.is_unsafe:
+        return ResolvedInteraction(unsafe_category=safety.category)
 
     if _best_phrase_score(normalized, lex.IS_BOT_PHRASES) >= lex.INTENT_MATCH_THRESHOLD:
         return ResolvedInteraction(is_bot_query=True)

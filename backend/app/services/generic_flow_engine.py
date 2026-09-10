@@ -80,6 +80,7 @@ from app.core.ws_manager import manager as ws_manager
 from app.models.customer import Customer
 from app.models.engagement import Engagement, EngagementItem
 from app.models.enums import EngagementStatus, EngagementType, MessageDirection, MessageSender
+from app.models.flow_definition import FlowDefinition
 from app.models.jewellery_design import JewelleryDesign
 from app.models.message import Message
 from app.models.restaurant import Restaurant
@@ -88,6 +89,7 @@ from app.repositories.customer_repository import CustomerRepository
 from app.repositories.engagement_repository import EngagementRepository
 from app.repositories.flow_definition_repository import FlowDefinitionRepository
 from app.services import analytics, conversation_lexicon
+from app.services import conversational_safety
 from app.services.conversational_intent import _best_phrase_score, _normalize as _normalize_for_intent, resolve_interaction
 from app.services.conversational_style import humanize
 from app.repositories.generic_conversation_repository import GenericConversationStateRepository
@@ -331,6 +333,9 @@ async def process_inbound_message(
     interaction: GenericInteraction,
     wa_message_id: str | None = None,
     dry_run: bool = False,
+    *,
+    customer: Customer | None = None,
+    flow_def: FlowDefinition | None = None,
 ) -> None:
     """Entry point called by webhook.py for every generic-engine business's inbound
     message -- the direct counterpart of flow_engine.py::process_inbound_message.
@@ -344,6 +349,17 @@ async def process_inbound_message(
     multi-turn preview conversation has somewhere to keep its place between HTTP
     requests) -- they simply belong to a synthetic, never-a-real-phone-number customer
     the router creates, so they can never collide with or be mistaken for real traffic.
+
+    `customer`/`flow_def`: purely an optional optimization for a caller (currently only
+    demo_bot_service.py::handle_demo_inbound) that has ALREADY fetched these exact same
+    rows, scoped to this exact `restaurant`, earlier in the same request/transaction, and
+    wants to avoid re-querying them here. Both are neither lock-sensitive nor mutated by
+    anything between such a caller's own fetch and this call, so passing them through is
+    provably equivalent to this function fetching them itself -- every existing caller
+    that omits them (the overwhelming majority) gets byte-for-byte the same two lookups
+    this function has always done. Never pass a `GenericConversationState` this way: that
+    row's FOR UPDATE lock below is the one thing that must always be freshly acquired
+    here, never satisfied from an earlier unlocked read.
     """
     message_repo = _GenericMessageRepo(session)
     if wa_message_id:
@@ -357,7 +373,8 @@ async def process_inbound_message(
             return
 
     customer_repo = CustomerRepository(session)
-    customer = await customer_repo.get_or_create(restaurant.id, from_phone)
+    if customer is None:
+        customer = await customer_repo.get_or_create(restaurant.id, from_phone)
     if interaction.profile_name and not customer.name:
         # Seeds a default the "auto-pull name, editable" steps show -- never overwrites a
         # name the customer or staff already set.
@@ -367,9 +384,12 @@ async def process_inbound_message(
     # Locks the row for the duration of this transaction -- same reasoning as
     # flow_engine.py's ConversationState lock: two concurrent/redelivered webhook events
     # for the same customer serialize instead of both advancing the same pre-transition step.
+    # Always a fresh read, regardless of `customer`/`flow_def` above -- never satisfiable
+    # from an earlier unlocked read without defeating the whole point of the lock.
     state = await state_repo.get_for_update_by_customer(customer.id)
     flow_repo = FlowDefinitionRepository(session)
-    flow_def = await flow_repo.get_by_restaurant(restaurant.id)
+    if flow_def is None:
+        flow_def = await flow_repo.get_by_restaurant(restaurant.id)
     if state is None:
         from app.models.generic_conversation_state import GenericConversationState
 
@@ -629,9 +649,21 @@ class _Engine:
         # BACK_REPLY_ID check right below) sees something it already knows how to handle;
         # never niche-specific, driven only by `current`'s own generic FlowDefinition data
         # plus restaurant.conversation_settings. A real button/list tap (reply_id already
-        # set) always passes through resolve_interaction untouched.
-        resolved_options = await self._resolve_options(restaurant, state, current) if current.get("buttons_from") else []
+        # set) always passes through resolve_interaction untouched -- resolve_interaction
+        # itself returns a no-op the instant interaction.reply_id is set, without even
+        # looking at `options`, so `_resolve_options`'s real DB query (menu/category/staff
+        # lookup + bulk image resolution) is skipped entirely for that case rather than
+        # run and discarded. Only a free-text message can ever actually consume
+        # resolved_options below (every branch that reads it is gated on `resolved.*`,
+        # which stays all-default/no-op whenever reply_id was set).
+        if interaction.reply_id:
+            resolved_options: list[dict[str, Any]] = []
+        else:
+            resolved_options = await self._resolve_options(restaurant, state, current) if current.get("buttons_from") else []
         resolved = resolve_interaction(interaction, resolved_options, state.context, restaurant)
+        if resolved.unsafe_category:
+            await self._send_safety_response(restaurant, customer, state, from_phone, current, steps_by_id, resolved.unsafe_category)
+            return
         if resolved.is_bot_query:
             await self._send_bot_disclosure(restaurant, customer, state, from_phone, current, steps_by_id)
             return
@@ -673,6 +705,28 @@ class _Engine:
         await self._process_input(restaurant, customer, state, from_phone, current, steps_by_id, interaction)
 
     # --- conversational-intent helpers (see conversational_intent.py) ------------------
+
+    async def _send_safety_response(self, restaurant, customer, state, from_phone, current, steps_by_id, category: str) -> None:
+        """Conservative rule-based safety layer (see conversational_safety.py) -- a short,
+        calm, professional boundary line, never an insult, never an explanation of why
+        the rule exists (which would itself leak internal reasoning to a prompt-injection
+        attempt), then the current step is re-rendered so the conversation carries on
+        normally -- same "acknowledge, then return to the flow" shape as
+        _send_bot_disclosure right below. This is a real analytics event (SAFETY_REFUSAL)
+        so a business owner can see if/how often this actually fires, without logging the
+        customer's own message text anywhere beyond the ordinary inbound Message row every
+        turn already gets.
+        """
+        self._record_event(
+            restaurant.id, analytics.SAFETY_REFUSAL,
+            customer_id=customer.id, step_id=current.get("step_id"), niche_code=restaurant.niche_type,
+            details={"category": category},
+        )
+        await send_generic_message(
+            self.session, self.sender, restaurant, customer.id, from_phone,
+            OutboundMessage.text(from_phone, conversational_safety.response_for(category)),
+        )
+        await self._render_step(restaurant, customer, state, from_phone, current, steps_by_id)
 
     async def _send_bot_disclosure(self, restaurant, customer, state, from_phone, current, steps_by_id) -> None:
         """Spec requirement: never pretend to be human. One fixed, honest line -- never
@@ -1053,10 +1107,12 @@ class _Engine:
         if step["type"] in ("message",):
             # A pure "message" step (welcome text, a standalone gallery step, etc.) has no
             # options to burst/gallery through _send_options -- so curated per-step images
-            # (see _step_gallery) are sent here directly. All dispatched CONCURRENTLY via
-            # send_generic_messages_batch (image(s) listed first, text last) rather than
-            # awaited one-by-one -- same reasoning as _send_options: each is a real network
-            # round-trip to Meta, so sequential awaiting visibly stacks up.
+            # (see _step_gallery) are sent here directly. Dispatched via
+            # send_generic_messages_batch with every image listed first and the text
+            # message last -- that function sends the list SEQUENTIALLY, in order (never
+            # concurrently), which is what guarantees the image(s) actually arrive before
+            # the text; see that function's own docstring for why concurrent dispatch was
+            # tried and reverted (an image reliably loses a race against a plain text send).
             messages = []
             if step.get("show_image", True):
                 for img in await self._step_gallery(restaurant, step):

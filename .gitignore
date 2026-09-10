@@ -30,3 +30,4 @@ Thumbs.db
 *.log
 backend/pytest_*.txt
 ngrok.zip
+nul
