@@ -1,4 +1,4 @@
-# KelvionTech WhatsApp Restaurant Platform
+#  WhatsApp Restaurant Platform
 
 A multi-tenant WhatsApp ordering platform: onboard a restaurant from the admin dashboard,
 and its WhatsApp bot works automatically off that restaurant's own configuration — menu,
